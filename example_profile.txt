@@ -1,0 +1,19 @@
+I am a professor of chemical engineering, specializing in large-scale separation processes based on adsorption, chromatography, and ion exchange.
+
+My AI/ML expertise includes:
+- LoRA fine-tuning of LLMs
+- Building MCP servers that connect LLMs to simulation software (Fortran, Python)
+- Classical ML for process modeling (MLPs, LSTMs)
+
+I'm looking for collaborators who work on:
+- Integration of LLMs with domain-specific computational tools
+- Neuro-symbolic AI and constraint programming
+- Generative AI for scientific applications
+- Process systems engineering with AI/ML components
+
+I am NOT interested in:
+- Pure materials synthesis/development
+- Analytical chemistry applications
+- Biopharmaceutical/bioprocess focus
+
+Ideal collaboration: Someone who builds similar infrastructure (LLM + solver/simulator integration) but in a different domain, allowing methodology transfer.
