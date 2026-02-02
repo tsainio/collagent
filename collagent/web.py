@@ -245,7 +245,7 @@ def create_web_app():
             # Stream output from queue
             while True:
                 try:
-                    msg = output_queue.get(timeout=60)
+                    msg = output_queue.get(timeout=180)  # Extended for GPT-5.2 reasoning models
                     yield f"data: {json.dumps(msg)}\n\n"
 
                     if msg.get('type') in ('complete', 'error'):

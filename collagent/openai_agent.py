@@ -66,6 +66,10 @@ class CollAgentOpenAI(CollAgentBase):
                     "instructions": system_instruction,
                 }
 
+                # GPT-5.2 requires reasoning_effort for tool calls to work
+                if "gpt-5" in self.model_name.lower():
+                    request_params["reasoning"] = {"effort": "low"}
+
                 if previous_response_id:
                     # Continue conversation using previous response ID
                     request_params["previous_response_id"] = previous_response_id
@@ -152,12 +156,17 @@ class CollAgentOpenAI(CollAgentBase):
         # Initial request
         self.console.print(f"[dim]{progress_message}[/dim]")
         try:
-            response = self.client.responses.create(
-                model=self.model_name,
-                tools=tools,
-                instructions=system_instruction,
-                input=user_message,
-            )
+            request_params = {
+                "model": self.model_name,
+                "tools": tools,
+                "instructions": system_instruction,
+                "input": user_message,
+            }
+            # GPT-5.2 requires reasoning_effort for tool calls to work
+            if "gpt-5" in self.model_name.lower():
+                request_params["reasoning"] = {"effort": "low"}
+
+            response = self.client.responses.create(**request_params)
         except Exception as e:
             self.console.print(f"[red]API Error in {error_context}: {e}[/red]")
             return items
@@ -207,13 +216,18 @@ class CollAgentOpenAI(CollAgentBase):
             if tool_outputs:
                 self.console.print(f"[dim]{progress_message}[/dim]")
                 try:
-                    response = self.client.responses.create(
-                        model=self.model_name,
-                        previous_response_id=response.id,
-                        input=tool_outputs,
-                        tools=tools,
-                        instructions=system_instruction,
-                    )
+                    request_params = {
+                        "model": self.model_name,
+                        "previous_response_id": response.id,
+                        "input": tool_outputs,
+                        "tools": tools,
+                        "instructions": system_instruction,
+                    }
+                    # GPT-5.2 requires reasoning_effort for tool calls to work
+                    if "gpt-5" in self.model_name.lower():
+                        request_params["reasoning"] = {"effort": "low"}
+
+                    response = self.client.responses.create(**request_params)
                 except Exception as e:
                     self.console.print(f"[red]API Error submitting tool outputs: {e}[/red]")
                     break
