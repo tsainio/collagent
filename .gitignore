@@ -16,3 +16,13 @@ __pycache__/
 # Private/internal
 CLAUDE.md
 .claude/
+
+# Security - keys and certificates
+*.pem
+*.key
+*.p12
+*.jks
+*.pfx
+secrets.json
+credentials.json
+.secrets.baseline

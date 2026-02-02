@@ -6,20 +6,19 @@ Licensed under AGPL-3.0
 """
 
 import json
-import os
 import sys
 import threading
 import uuid
 from datetime import datetime
 from queue import Queue
 
-from google.genai import types
-
 from rich.panel import Panel
 
 from .template import WEB_TEMPLATE
 from .streaming import console, search_results, search_results_lock, StreamingConsole
-from .core import CollAgentGoogle, HTML_REPORT_TEMPLATE
+from .core import HTML_REPORT_TEMPLATE
+from .config import get_available_models, get_default_model
+from .factory import create_agent
 
 # Flask imports (optional for web mode)
 try:
@@ -49,6 +48,23 @@ def create_web_app():
         pdf_style = "" if WEASYPRINT_AVAILABLE else "display: none;"
         return WEB_TEMPLATE.replace("{{PDF_BUTTON_STYLE}}", pdf_style)
 
+    @app.route('/api/models')
+    def api_models():
+        """Return available models (those with API keys set)."""
+        models = get_available_models()
+        default = get_default_model()
+        default_id = default.get("id") if default else None
+
+        result = []
+        for m in models:
+            result.append({
+                "id": m["id"],
+                "display_name": m.get("display_name", m["id"]),
+                "provider": m.get("provider", "unknown"),
+                "default": m["id"] == default_id
+            })
+        return jsonify(result)
+
     @app.route('/search')
     def search():
         """Handle search requests with SSE streaming."""
@@ -69,19 +85,18 @@ def create_web_app():
                 yield f"data: {json.dumps({'type': 'error', 'text': 'Profile is required'})}\n\n"
             return Response(error_gen(), mimetype='text/event-stream')
 
-        api_key = os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            def error_gen():
-                yield f"data: {json.dumps({'type': 'error', 'text': 'GOOGLE_API_KEY not configured on server'})}\n\n"
-            return Response(error_gen(), mimetype='text/event-stream')
-
         def generate():
             search_id = str(uuid.uuid4())
             output_queue = Queue()
             streaming_console = StreamingConsole(output_queue)
 
-            # Create agent with streaming console
-            agent = CollAgentGoogle(api_key, model=model, output_console=streaming_console)
+            # Create agent with streaming console using factory
+            try:
+                agent = create_agent(model, output_console=streaming_console)
+            except ValueError as e:
+                output_queue.put({'type': 'error', 'text': str(e)})
+                yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
+                return
 
             # Run search in background thread
             def run_search():
@@ -290,18 +305,24 @@ def run_web_server(port: int = 5000):
         console.print("[dim]Install with: pip install flask[/dim]")
         sys.exit(1)
 
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        console.print("[red]Error: GOOGLE_API_KEY environment variable not set[/red]")
-        console.print("[dim]Get your key at https://aistudio.google.com/apikey[/dim]")
+    # Check if any models are available
+    available = get_available_models()
+    if not available:
+        console.print("[red]Error: No API keys configured[/red]")
+        console.print("[dim]Set GOOGLE_API_KEY or OPENAI_API_KEY environment variable[/dim]")
         sys.exit(1)
+
+    # Build provider info string
+    providers = set(m.get("provider") for m in available)
+    provider_str = ", ".join(sorted(providers))
 
     app = create_web_app()
 
     console.print(Panel(
         f"[bold]CollAgent Web Interface[/bold]\n\n"
         f"URL: http://0.0.0.0:{port}\n"
-        f"API Key: {'*' * 8}...{api_key[-4:]}\n\n"
+        f"Providers: {provider_str}\n"
+        f"Models available: {len(available)}\n\n"
         f"Press Ctrl+C to stop",
         title="Web Server",
         border_style="green"

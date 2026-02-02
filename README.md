@@ -2,7 +2,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 
-An AI-powered tool to find potential research collaborators using Google Gemini with built-in Google Search grounding.
+An AI-powered tool to find potential research collaborators using Google Gemini or OpenAI GPT models with web search capabilities.
 
 ## Features
 
@@ -17,7 +17,9 @@ An AI-powered tool to find potential research collaborators using Google Gemini 
 ## Requirements
 
 - Python 3.10+
-- Google API key with Gemini API access ([Get one here](https://aistudio.google.com/apikey))
+- At least one API key:
+  - Google API key for Gemini models ([Get one here](https://aistudio.google.com/apikey))
+  - OpenAI API key for GPT models ([Get one here](https://platform.openai.com/api-keys))
 
 ## Installation
 
@@ -38,14 +40,14 @@ pip install -r requirements-windows.txt
 The easiest way to use CollAgent is through its web interface:
 
 ```bash
-# Using Docker
-docker run --rm -p 5000:5000 -e GOOGLE_API_KEY=your_key collagent --web
+# Local Python (recommended for development)
+./start-without-docker.sh
 
-# From source
-python collagent.py --web
+# Using Docker
+./start-docker.sh
 ```
 
-Then open http://localhost:5000 in your browser.
+Then open http://localhost:5050 in your browser. Press Ctrl+C to stop (local) or run `./stop-docker.sh` (Docker).
 
 ### CLI Mode with Docker
 
@@ -57,10 +59,17 @@ docker run --rm -e GOOGLE_API_KEY=your_key_here collagent \
 ### CLI Mode from Source
 
 ```bash
-pip install google-genai rich python-dotenv flask
+pip install -r requirements.txt
+
+# Set at least one API key
 export GOOGLE_API_KEY="your-gemini-key"
+# and/or
+export OPENAI_API_KEY="your-openai-key"
 
 python collagent.py -p "machine learning for drug discovery"
+
+# Use a specific model
+python collagent.py -p "machine learning" --model gpt-5.2
 ```
 
 ## Usage
@@ -113,15 +122,15 @@ python collagent.py -f my_profile.txt --max-institutions 5
 The web interface provides a beautiful dark-mode glassmorphism UI with real-time streaming output:
 
 ```bash
-# Using the start/stop scripts (recommended)
-./start.sh   # Starts on port 5050 by default
-./stop.sh    # Stops the container
+# Local Python (runs in foreground, Ctrl+C to stop)
+./start-without-docker.sh
 
-# Or manually with Docker
-docker run --rm -p 5000:5000 -e GOOGLE_API_KEY=your_key collagent --web
+# Docker (runs in background)
+./start-docker.sh
+./stop-docker.sh
 
-# From source
-python collagent.py --web --port 5000
+# Or manually
+python collagent.py --web --port 5050
 ```
 
 ### Features
@@ -142,24 +151,30 @@ python collagent.py --web --port 5000
 
 ### Start/Stop Scripts
 
-The easiest way to run the web interface:
-
+**Local Python** (runs in foreground):
 ```bash
-# Start (uses port 5050 by default, reads .env for API key)
-./start.sh
-
-# Stop
-./stop.sh
-
-# Use custom port
-COLLAGENT_PORT=8080 ./start.sh
+./start-without-docker.sh          # Press Ctrl+C to stop
 ```
 
-### Docker Web Mode
+**Docker** (runs in background):
+```bash
+./start-docker.sh         # Starts container, auto-builds image if needed
+./stop-docker.sh          # Stops container
+```
+
+Both scripts use port 5050 by default and read API keys from `.env`.
+
+```bash
+# Use custom port
+COLLAGENT_PORT=8080 ./start-without-docker.sh
+COLLAGENT_PORT=8080 ./start-docker.sh
+```
+
+### Manual Docker
 
 ```bash
 # Start web interface
-docker run --rm -p 5000:5000 -e GOOGLE_API_KEY=your_key collagent --web
+docker run --rm -p 5050:5050 -e GOOGLE_API_KEY=your_key collagent --web --port 5050
 
 # Custom port
 docker run --rm -p 8080:8080 -e GOOGLE_API_KEY=your_key collagent --web --port 8080
@@ -198,7 +213,7 @@ All options marked with * are also available in the web interface.
 | Option | Description |
 |--------|-------------|
 | `-w, --web` | Start web interface instead of CLI mode |
-| `--port` | Port for web server (default: 5000) |
+| `--port` | Port for web server (default: 5050) |
 | `-p, --profile` | Your research profile/description (required for CLI) * |
 | `-f, --profile-file` | File containing your research profile * |
 | `-i, --institution` | Target institution (enables single institution mode) * |
@@ -209,7 +224,8 @@ All options marked with * are also available in the web interface.
 | `--max-institutions` | Max institutions in broad search (default: 5) * |
 | `--region` | Region filter for broad search (e.g., "Europe", "USA") * |
 | `--max-turns` | Search depth - total budget across phases (default: 10) * |
-| `--model` | Gemini model (default: gemini-3-flash-preview) * |
+| `--model` | AI model to use (default: gemini-3-flash-preview) * |
+| `--list-models` | Show all available models and exit |
 
 ## Output
 
@@ -242,11 +258,25 @@ The tool produces:
 
 ## Model Options
 
+List available models:
+```bash
+python collagent.py --list-models
+```
+
+### Google Gemini Models
 ```bash
 --model gemini-3-flash-preview  # Default, fast
---model gemini-2.5-flash        # Alternative
 --model gemini-3-pro-preview    # Higher quality, slower
 ```
+
+### OpenAI GPT Models
+```bash
+--model gpt-5.2                 # GPT-5.2 Thinking
+--model gpt-5.2-chat-latest     # GPT-5.2 Instant (Fast)
+--model gpt-5.2-pro             # GPT-5.2 Pro (Highest Quality)
+```
+
+Only models with configured API keys will be available. Set `GOOGLE_API_KEY` for Gemini models or `OPENAI_API_KEY` for GPT models.
 
 ## Limitations
 

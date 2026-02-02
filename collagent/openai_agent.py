@@ -1,91 +1,79 @@
 """
-CollAgent - Core Agent Class (Google Implementation)
+CollAgent - OpenAI Agent Implementation
 
 Copyright (C) 2026 Tuomo Sainio
 Licensed under AGPL-3.0
 """
 
 import concurrent.futures
+import json
 from datetime import datetime
 from typing import Optional
 
-from google import genai
-from google.genai import types
+from openai import OpenAI
 from rich.panel import Panel
 
 from .base import CollAgentBase
 
 
-class CollAgentGoogle(CollAgentBase):
-    """Research Collaborator Search Agent using Google GenAI SDK (Two-Phase)"""
+class CollAgentOpenAI(CollAgentBase):
+    """Research Collaborator Search Agent using OpenAI API with web search."""
 
-    def __init__(self, api_key: str, model: str = "gemini-3-flash-preview", output_console=None):
+    def __init__(self, api_key: str, model: str = "gpt-5.2", output_console=None):
         super().__init__(api_key, model, output_console)
-        self.client = genai.Client(api_key=api_key)
+        self.client = OpenAI(api_key=api_key)
 
-    def get_response_text(self, response) -> str:
-        """Extract text from response"""
-        try:
-            if (response.candidates and
-                response.candidates[0].content and
-                response.candidates[0].content.parts):
-                texts = []
-                for part in response.candidates[0].content.parts:
-                    if hasattr(part, 'text') and part.text:
-                        texts.append(part.text)
-                return "\n".join(texts)
-        except (AttributeError, IndexError):
-            pass
-        return ""
+    def _get_response_text(self, response) -> str:
+        """Extract text from OpenAI Responses API response."""
+        texts = []
+        for item in response.output:
+            if item.type == "message":
+                for content in item.content:
+                    if content.type == "output_text":
+                        texts.append(content.text)
+        return "\n".join(texts)
 
-    def parse_function_calls(self, response) -> list:
-        """Extract function calls from response"""
-        calls = []
-        try:
-            if (response.candidates and
-                response.candidates[0].content and
-                response.candidates[0].content.parts):
-                for part in response.candidates[0].content.parts:
-                    if hasattr(part, 'function_call') and part.function_call:
-                        calls.append(part.function_call)
-        except (AttributeError, IndexError):
-            pass
-        return calls
+    def _get_citations(self, response) -> list:
+        """Extract citations from response annotations."""
+        citations = []
+        for item in response.output:
+            if item.type == "message":
+                for content in item.content:
+                    if hasattr(content, 'annotations') and content.annotations:
+                        for ann in content.annotations:
+                            if hasattr(ann, 'url_citation') and ann.url_citation:
+                                citations.append(ann.url_citation.url)
+        return citations
 
-    def _run_grounded_search(self, system_instruction: str, user_message: str,
-                              continue_message: str, max_turns: int,
-                              phase_name: str, error_context: str) -> str:
+    def _run_web_search(self, system_instruction: str, user_message: str,
+                        continue_message: str, max_turns: int,
+                        phase_name: str, error_context: str) -> str:
         """
-        Run a multi-turn Google Search grounded conversation.
+        Run a multi-turn web search using OpenAI Responses API.
         Returns accumulated research text.
         """
-        config = types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            tools=[types.Tool(google_search=types.GoogleSearch())],
-            temperature=0.7,
-        )
+        messages = [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": user_message}
+        ]
 
-        contents = [types.Content(role="user", parts=[types.Part(text=user_message)])]
         accumulated_text = []
         last_response_length = 0
 
-        turn = 0
-        while turn < max_turns:
-            turn += 1
-
+        for turn in range(1, max_turns + 1):
             self.console.print(f"[dim]{phase_name} turn {turn}/{max_turns}...[/dim]")
 
             try:
-                response = self.client.models.generate_content(
+                response = self.client.responses.create(
                     model=self.model_name,
-                    contents=contents,
-                    config=config,
+                    tools=[{"type": "web_search_preview"}],
+                    input=messages
                 )
             except Exception as e:
                 self.console.print(f"[red]API Error in {error_context}: {e}[/red]")
                 break
 
-            response_text = self.get_response_text(response)
+            response_text = self._get_response_text(response)
             if response_text:
                 accumulated_text.append(response_text)
                 preview = response_text[:400] + "..." if len(response_text) > 400 else response_text
@@ -103,35 +91,23 @@ class CollAgentGoogle(CollAgentBase):
 
                 last_response_length = len(response_text)
 
-            # Continue conversation for multi-turn search
-            try:
-                if response.candidates and response.candidates[0].content:
-                    contents.append(response.candidates[0].content)
-                    contents.append(types.Content(
-                        role="user",
-                        parts=[types.Part(text=continue_message)]
-                    ))
-                else:
-                    self.console.print("[dim]No more results.[/dim]")
-                    break
-            except (AttributeError, IndexError) as e:
-                self.console.print(f"[yellow]Response parsing issue: {e}[/yellow]")
-                break
+            # Continue conversation
+            messages.append({"role": "assistant", "content": response_text})
+            messages.append({"role": "user", "content": continue_message})
 
         return "\n\n".join(accumulated_text)
 
     def _run_extraction_loop(self, system_instruction: str, user_message: str,
-                              save_func: types.FunctionDeclaration,
-                              save_func_name: str, on_save: callable,
-                              progress_message: str, error_context: str,
-                              max_turns: int = 5) -> list:
+                              save_func_schema: dict, save_func_name: str,
+                              on_save: callable, progress_message: str,
+                              error_context: str, max_turns: int = 5) -> list:
         """
-        Run a function-calling extraction loop.
+        Run a function-calling extraction loop using chat completions.
 
         Args:
             system_instruction: System prompt for extraction
             user_message: User prompt with research text
-            save_func: FunctionDeclaration for the save function
+            save_func_schema: JSON schema for the save function
             save_func_name: Name of the save function to match
             on_save: Callback(args) -> (display_name, score, result_message)
             progress_message: Message to show during extraction
@@ -141,54 +117,65 @@ class CollAgentGoogle(CollAgentBase):
         Returns:
             List of extracted items
         """
-        finish_func = types.FunctionDeclaration(
-            name="finish_extraction",
-            description="Call this after saving all items.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "summary": types.Schema(type=types.Type.STRING, description="Brief summary"),
-                },
-                required=["summary"]
-            )
-        )
+        finish_func_schema = {
+            "type": "function",
+            "function": {
+                "name": "finish_extraction",
+                "description": "Call this after saving all items.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "summary": {
+                            "type": "string",
+                            "description": "Brief summary"
+                        }
+                    },
+                    "required": ["summary"]
+                }
+            }
+        }
 
-        config = types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            tools=[types.Tool(function_declarations=[save_func, finish_func])],
-            temperature=0.3,
-        )
-
-        contents = [types.Content(role="user", parts=[types.Part(text=user_message)])]
+        tools = [save_func_schema, finish_func_schema]
+        messages = [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": user_message}
+        ]
         items = []
 
         for turn in range(max_turns):
             self.console.print(f"[dim]{progress_message}[/dim]")
 
             try:
-                response = self.client.models.generate_content(
+                response = self.client.chat.completions.create(
                     model=self.model_name,
-                    contents=contents,
-                    config=config,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    temperature=0.3
                 )
             except Exception as e:
                 self.console.print(f"[red]API Error in {error_context}: {e}[/red]")
                 break
 
-            function_calls = self.parse_function_calls(response)
+            choice = response.choices[0]
+            message = choice.message
 
-            if not function_calls:
+            # Add assistant message to history
+            messages.append(message)
+
+            if not message.tool_calls:
                 break
 
-            if response.candidates and response.candidates[0].content:
-                contents.append(response.candidates[0].content)
-
-            function_responses = []
+            # Process tool calls
+            tool_responses = []
             finished = False
 
-            for fc in function_calls:
-                name = fc.name
-                args = dict(fc.args) if fc.args else {}
+            for tc in message.tool_calls:
+                name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                except json.JSONDecodeError:
+                    args = {}
 
                 if name == save_func_name:
                     display_name, score, result = on_save(args)
@@ -200,14 +187,13 @@ class CollAgentGoogle(CollAgentBase):
                 else:
                     result = f"Unknown: {name}"
 
-                function_responses.append(types.Part(
-                    function_response=types.FunctionResponse(
-                        name=name,
-                        response={"result": result}
-                    )
-                ))
+                tool_responses.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps({"result": result})
+                })
 
-            contents.append(types.Content(role="user", parts=function_responses))
+            messages.extend(tool_responses)
 
             if finished:
                 break
@@ -217,10 +203,10 @@ class CollAgentGoogle(CollAgentBase):
     def phase1_research(self, profile: str, institution: Optional[str] = None,
                         focus_areas: Optional[list] = None, max_turns: int = 10) -> str:
         """
-        Phase 1: Use Google Search grounding to research potential collaborators.
+        Phase 1: Use web search to research potential collaborators.
         Returns accumulated research text.
         """
-        self.console.print("[cyan]Phase 1: Researching with Google Search...[/cyan]")
+        self.console.print("[cyan]Phase 1: Researching with web search...[/cyan]")
 
         system_instruction = """You are a research assistant finding potential collaborators.
 
@@ -248,7 +234,7 @@ IMPORTANT: When you have gathered sufficient information about 3-5 good candidat
 
 Search for researchers and gather detailed information about promising matches. When done, say "SEARCH COMPLETE"."""
 
-        return self._run_grounded_search(
+        return self._run_web_search(
             system_instruction=system_instruction,
             user_message=user_message,
             continue_message="Continue searching. If you have found enough candidates (3-5), provide a summary and say 'SEARCH COMPLETE'.",
@@ -263,25 +249,28 @@ Search for researchers and gather detailed information about promising matches. 
         """
         self.console.print("\n[cyan]Phase 2: Extracting structured data...[/cyan]")
 
-        save_collaborator_func = types.FunctionDeclaration(
-            name="save_collaborator",
-            description="Save a potential collaborator. Call this for each researcher found.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "name": types.Schema(type=types.Type.STRING, description="Researcher's full name"),
-                    "position": types.Schema(type=types.Type.STRING, description="Current position/title"),
-                    "institution": types.Schema(type=types.Type.STRING, description="Institution name"),
-                    "email": types.Schema(type=types.Type.STRING, description="Contact email if found"),
-                    "research_focus": types.Schema(type=types.Type.STRING, description="Their main research areas"),
-                    "alignment_score": types.Schema(type=types.Type.INTEGER, description="Alignment with user's research (1-5). Be critical: 5=exceptional direct overlap, 4=strong overlap, 3=moderate relevance, 2=weak connection, 1=minimal relevance"),
-                    "alignment_reasons": types.Schema(type=types.Type.STRING, description="Why this person is a good match"),
-                    "key_publications": types.Schema(type=types.Type.STRING, description="Relevant recent publications"),
-                    "collaboration_angle": types.Schema(type=types.Type.STRING, description="Suggested collaboration approach"),
-                },
-                required=["name", "institution", "research_focus", "alignment_score", "alignment_reasons"]
-            )
-        )
+        save_collaborator_schema = {
+            "type": "function",
+            "function": {
+                "name": "save_collaborator",
+                "description": "Save a potential collaborator. Call this for each researcher found.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Researcher's full name"},
+                        "position": {"type": "string", "description": "Current position/title"},
+                        "institution": {"type": "string", "description": "Institution name"},
+                        "email": {"type": "string", "description": "Contact email if found"},
+                        "research_focus": {"type": "string", "description": "Their main research areas"},
+                        "alignment_score": {"type": "integer", "description": "Alignment with user's research (1-5). Be critical: 5=exceptional direct overlap, 4=strong overlap, 3=moderate relevance, 2=weak connection, 1=minimal relevance"},
+                        "alignment_reasons": {"type": "string", "description": "Why this person is a good match"},
+                        "key_publications": {"type": "string", "description": "Relevant recent publications"},
+                        "collaboration_angle": {"type": "string", "description": "Suggested collaboration approach"},
+                    },
+                    "required": ["name", "institution", "research_focus", "alignment_score", "alignment_reasons"]
+                }
+            }
+        }
 
         system_instruction = """Extract collaborator information from the research text and save each one using save_collaborator.
 
@@ -318,7 +307,7 @@ Call save_collaborator for each researcher, then finish_extraction when done."""
         self._run_extraction_loop(
             system_instruction=system_instruction,
             user_message=user_message,
-            save_func=save_collaborator_func,
+            save_func_schema=save_collaborator_schema,
             save_func_name="save_collaborator",
             on_save=on_save_collaborator,
             progress_message="Extracting data...",
@@ -331,7 +320,7 @@ Call save_collaborator for each researcher, then finish_extraction when done."""
                               region: Optional[str] = None, max_turns: int = 5) -> str:
         """
         Discover suitable institutions/departments based on research profile.
-        Uses Google Search grounding to find relevant universities and research groups.
+        Uses web search to find relevant universities and research groups.
         Returns accumulated research text about institutions.
         """
         self.console.print("[cyan]Phase 0: Discovering institutions...[/cyan]")
@@ -364,7 +353,7 @@ IMPORTANT: When you have gathered sufficient information about 5-10 good institu
 
 Search for universities and research institutes that are strong in these areas. When done, say "SEARCH COMPLETE"."""
 
-        return self._run_grounded_search(
+        return self._run_web_search(
             system_instruction=system_instruction,
             user_message=user_message,
             continue_message="Continue searching. If you have found enough institutions (5-10), provide a summary and say 'SEARCH COMPLETE'.",
@@ -380,23 +369,26 @@ Search for universities and research institutes that are strong in these areas. 
         """
         self.console.print("\n[cyan]Extracting institution data...[/cyan]")
 
-        save_institution_func = types.FunctionDeclaration(
-            name="save_institution",
-            description="Save a potential institution for collaboration. Call this for each institution found.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "name": types.Schema(type=types.Type.STRING, description="Institution name (e.g., 'ETH Zürich', 'LUT University')"),
-                    "department": types.Schema(type=types.Type.STRING, description="Relevant department or school"),
-                    "country": types.Schema(type=types.Type.STRING, description="Country where the institution is located"),
-                    "city": types.Schema(type=types.Type.STRING, description="City where the institution is located"),
-                    "relevance_score": types.Schema(type=types.Type.INTEGER, description="Relevance to user's research (1-5). Be critical: 5=world-leading in exact area, 4=strong program, 3=relevant but not specialized, 2=tangential, 1=weak fit"),
-                    "reason": types.Schema(type=types.Type.STRING, description="Why this institution is a good match"),
-                    "key_groups": types.Schema(type=types.Type.STRING, description="Key research groups or centers"),
-                },
-                required=["name", "country", "relevance_score", "reason"]
-            )
-        )
+        save_institution_schema = {
+            "type": "function",
+            "function": {
+                "name": "save_institution",
+                "description": "Save a potential institution for collaboration. Call this for each institution found.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Institution name (e.g., 'ETH Zürich', 'LUT University')"},
+                        "department": {"type": "string", "description": "Relevant department or school"},
+                        "country": {"type": "string", "description": "Country where the institution is located"},
+                        "city": {"type": "string", "description": "City where the institution is located"},
+                        "relevance_score": {"type": "integer", "description": "Relevance to user's research (1-5). Be critical: 5=world-leading in exact area, 4=strong program, 3=relevant but not specialized, 2=tangential, 1=weak fit"},
+                        "reason": {"type": "string", "description": "Why this institution is a good match"},
+                        "key_groups": {"type": "string", "description": "Key research groups or centers"},
+                    },
+                    "required": ["name", "country", "relevance_score", "reason"]
+                }
+            }
+        }
 
         system_instruction = """Extract institution information from the research text and save each one using save_institution.
 
@@ -431,7 +423,7 @@ Call save_institution for each institution, then finish_extraction when done."""
         institutions = self._run_extraction_loop(
             system_instruction=system_instruction,
             user_message=user_message,
-            save_func=save_institution_func,
+            save_func_schema=save_institution_schema,
             save_func_name="save_institution",
             on_save=on_save_institution,
             progress_message="Extracting institutions...",
@@ -479,7 +471,7 @@ Call save_institution for each institution, then finish_extraction when done."""
 
         # Limit institutions
         institutions = institutions[:max_institutions]
-        self.searched_institutions = institutions  # Store for report
+        self.searched_institutions = institutions
 
         self.console.print(f"\n[bold]Will search {len(institutions)} institutions in parallel:[/bold]")
         for inst in institutions:
@@ -490,7 +482,6 @@ Call save_institution for each institution, then finish_extraction when done."""
 
         def search_institution(inst_data):
             inst_name = inst_data.get("name", "Unknown Institution")
-            # Set section for this thread's messages
             if hasattr(self.console, 'set_section'):
                 self.console.set_section(inst_name)
             self.console.print(f"\n[bold blue]━━━ Searching: {inst_name} ━━━[/bold blue]")
@@ -502,7 +493,6 @@ Call save_institution for each institution, then finish_extraction when done."""
                     max_turns=turns_per_inst
                 )
             finally:
-                # Clear section when done
                 if hasattr(self.console, 'set_section'):
                     self.console.set_section(None)
             return inst_name
@@ -525,7 +515,7 @@ Call save_institution for each institution, then finish_extraction when done."""
                focus_areas: Optional[list] = None, max_turns: int = 10) -> list:
         """
         Search for collaborators using two-phase approach.
-        Phase 1: Google Search grounding for research
+        Phase 1: Web search for research
         Phase 2: Function calling for structured extraction
         """
         self.console.print(Panel(
@@ -537,7 +527,7 @@ Call save_institution for each institution, then finish_extraction when done."""
             border_style="green"
         ))
 
-        # Phase 1: Research with Google Search
+        # Phase 1: Research with web search
         research_text = self.phase1_research(
             profile=profile,
             institution=institution,
@@ -558,8 +548,7 @@ Call save_institution for each institution, then finish_extraction when done."""
         return collaborators
 
     def generate_report(self, output_file: Optional[str] = None) -> str:
-        """Generate a markdown report of findings"""
-
+        """Generate a markdown report of findings."""
         if not self.collaborators:
             return "No collaborators found."
 
@@ -572,14 +561,13 @@ Call save_institution for each institution, then finish_extraction when done."""
         report = f"""# Collaborator Search Report
 
 Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}
-Model: Google Gemini ({self.model_name})
-Search: Google Search (built-in grounding)
+Model: OpenAI ({self.model_name})
+Search: Web Search (OpenAI Responses API)
 
 ## Summary
 
 Found **{len(sorted_collabs)}** potential collaborators"""
 
-        # Add institution summary if broad search was used
         if self.searched_institutions:
             report += f" across **{len(self.searched_institutions)}** institutions"
         report += ".\n\n"
@@ -602,7 +590,6 @@ Found **{len(sorted_collabs)}** potential collaborators"""
 
         # Group collaborators by institution if broad search was used
         if self.searched_institutions:
-            # Create groups by institution
             by_institution = {}
             for c in sorted_collabs:
                 inst = c.get("institution", "Unknown")
@@ -614,7 +601,6 @@ Found **{len(sorted_collabs)}** potential collaborators"""
 
             collab_num = 1
             for inst_name, collabs in by_institution.items():
-                # Find institution info
                 inst_info = next(
                     (i for i in self.searched_institutions if i.get("name", "") == inst_name),
                     None
@@ -653,7 +639,6 @@ Found **{len(sorted_collabs)}** potential collaborators"""
                     collab_num += 1
 
         else:
-            # Single institution mode - original flat list
             report += "## Top Matches\n\n"
 
             for i, c in enumerate(sorted_collabs, 1):
@@ -688,174 +673,3 @@ Found **{len(sorted_collabs)}** potential collaborators"""
             self.console.print(f"[green]Report saved to {output_file}[/green]")
 
         return report
-
-
-# HTML Report Template for web results (double braces to escape for .format())
-HTML_REPORT_TEMPLATE = '''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CollAgent Search Results</title>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-            color: #e4e4e7;
-            min-height: 100vh;
-            padding: 2rem;
-        }}
-        .container {{ max-width: 900px; margin: 0 auto; }}
-        h1 {{
-            text-align: center;
-            font-size: 2rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 1.5rem;
-        }}
-        .summary {{
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin-bottom: 2rem;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }}
-        .section-header {{
-            font-size: 1.25rem;
-            color: #667eea;
-            margin: 2rem 0 1rem 0;
-            padding-bottom: 0.5rem;
-            border-bottom: 1px solid rgba(102, 126, 234, 0.3);
-        }}
-        .top-badge {{
-            display: inline-block;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 0.25rem 0.75rem;
-            border-radius: 12px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            margin-left: 0.5rem;
-            vertical-align: middle;
-        }}
-        .collaborator {{
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin-bottom: 1rem;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }}
-        .collaborator.top-candidate {{
-            border: 1px solid rgba(102, 126, 234, 0.4);
-            background: rgba(102, 126, 234, 0.08);
-        }}
-        .collaborator h3 {{
-            color: #667eea;
-            margin-bottom: 0.5rem;
-        }}
-        .score {{
-            color: #fbbf24;
-            font-size: 1.1rem;
-            margin-bottom: 0.5rem;
-        }}
-        .field {{ margin-bottom: 0.5rem; }}
-        .field-label {{ color: #a1a1aa; font-size: 0.875rem; }}
-        .field-value {{ color: #e4e4e7; }}
-        table {{ width: 100%; border-collapse: collapse; margin: 1rem 0; }}
-        th, td {{ padding: 0.5rem; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }}
-        th {{ color: #a1a1aa; }}
-        td a {{ color: #818cf8; text-decoration: none; }}
-        td a:hover {{ color: #a5b4fc; text-decoration: underline; }}
-        .btn-find-page {{
-            display: inline-block;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white !important;
-            text-decoration: none;
-            border: none;
-            padding: 0.4rem 0.8rem;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.8rem;
-            font-weight: 500;
-            transition: all 0.2s ease;
-        }}
-        .btn-find-page:hover {{
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-            color: white !important;
-            text-decoration: none;
-        }}
-        .website-cell .found-link {{
-            color: #818cf8;
-            text-decoration: none;
-        }}
-        .website-cell .found-link:hover {{
-            color: #a5b4fc;
-            text-decoration: underline;
-        }}
-        .website-cell .error {{
-            color: #f87171;
-            font-size: 0.85rem;
-        }}
-        hr {{ border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 1rem 0; }}
-        .timestamp {{ color: #71717a; font-size: 0.875rem; text-align: center; margin-top: 2rem; }}
-
-        /* Collapsible styles */
-        .collapsible-header {{
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            padding: 1rem 1.5rem;
-            margin: 2rem 0 1rem 0;
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            transition: all 0.3s ease;
-        }}
-        .collapsible-header:hover {{
-            background: rgba(255, 255, 255, 0.08);
-        }}
-        .collapsible-header h3 {{
-            margin: 0;
-            color: #a1a1aa;
-            font-size: 1rem;
-        }}
-        .collapsible-icon {{
-            font-size: 1.25rem;
-            color: #667eea;
-            transition: transform 0.3s ease;
-        }}
-        .collapsible-header.active .collapsible-icon {{
-            transform: rotate(180deg);
-        }}
-        .collapsible-content {{
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.5s ease-out;
-        }}
-        .collapsible-content.active {{
-            max-height: none;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>CollAgent Search Results</h1>
-        {content}
-        <p class="timestamp">Generated: {timestamp}</p>
-    </div>
-    <script>
-        document.querySelectorAll('.collapsible-header').forEach(header => {{
-            header.addEventListener('click', () => {{
-                header.classList.toggle('active');
-                const content = header.nextElementSibling;
-                content.classList.toggle('active');
-            }});
-        }});
-    </script>
-</body>
-</html>
-'''

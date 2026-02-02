@@ -589,10 +589,9 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                     <div class="form-group">
                         <label for="model">Model</label>
                         <select id="model" name="model">
-                            <option value="gemini-3-flash-preview">Gemini 3 Flash (Default)</option>
-                            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                            <option value="gemini-3-pro-preview">Gemini 3 Pro (Higher Quality)</option>
+                            <option value="">Loading models...</option>
                         </select>
+                        <p class="help-text" id="modelHelp">Select an AI model for the search</p>
                     </div>
                 </div>
 
@@ -642,10 +641,51 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
         const statusIndicator = document.getElementById('statusIndicator');
         const statusText = document.getElementById('statusText');
         const resultsActions = document.getElementById('resultsActions');
+        const modelSelect = document.getElementById('model');
+        const modelHelp = document.getElementById('modelHelp');
 
         let currentSearchId = null;
         let eventSource = null;
         let isSearching = false;
+
+        // Load available models on page load
+        async function loadModels() {
+            try {
+                const response = await fetch('/api/models');
+                const models = await response.json();
+
+                modelSelect.innerHTML = '';
+
+                if (models.length === 0) {
+                    modelSelect.innerHTML = '<option value="">No models available</option>';
+                    modelHelp.textContent = 'Set GOOGLE_API_KEY or OPENAI_API_KEY to enable models';
+                    searchBtn.disabled = true;
+                    return;
+                }
+
+                models.forEach(m => {
+                    const option = document.createElement('option');
+                    option.value = m.id;
+                    option.textContent = `${m.display_name} [${m.provider}]`;
+                    if (m.default) {
+                        option.selected = true;
+                    }
+                    modelSelect.appendChild(option);
+                });
+
+                // Update help text with provider info
+                const providers = [...new Set(models.map(m => m.provider))];
+                modelHelp.textContent = `Available providers: ${providers.join(', ')}`;
+
+            } catch (error) {
+                modelSelect.innerHTML = '<option value="">Error loading models</option>';
+                modelHelp.textContent = 'Failed to load models from server';
+                console.error('Failed to load models:', error);
+            }
+        }
+
+        // Load models when page loads
+        loadModels();
 
         function stopSearch() {
             if (eventSource) {
