@@ -68,7 +68,7 @@ class CollAgentOpenAI(CollAgentBase):
 
                 # GPT-5.2 requires reasoning_effort for tool calls to work
                 if "gpt-5" in self.model_name.lower():
-                    request_params["reasoning"] = {"effort": "low"}
+                    request_params["reasoning"] = {"effort": "medium"}
 
                 if previous_response_id:
                     # Continue conversation using previous response ID
@@ -164,7 +164,7 @@ class CollAgentOpenAI(CollAgentBase):
             }
             # GPT-5.2 requires reasoning_effort for tool calls to work
             if "gpt-5" in self.model_name.lower():
-                request_params["reasoning"] = {"effort": "low"}
+                request_params["reasoning"] = {"effort": "medium"}
 
             response = self.client.responses.create(**request_params)
         except Exception as e:
@@ -225,7 +225,7 @@ class CollAgentOpenAI(CollAgentBase):
                     }
                     # GPT-5.2 requires reasoning_effort for tool calls to work
                     if "gpt-5" in self.model_name.lower():
-                        request_params["reasoning"] = {"effort": "low"}
+                        request_params["reasoning"] = {"effort": "medium"}
 
                     response = self.client.responses.create(**request_params)
                 except Exception as e:
