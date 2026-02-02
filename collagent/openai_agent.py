@@ -52,23 +52,31 @@ class CollAgentOpenAI(CollAgentBase):
         Run a multi-turn web search using OpenAI Responses API.
         Returns accumulated research text.
         """
-        messages = [
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": user_message}
-        ]
-
         accumulated_text = []
         last_response_length = 0
+        previous_response_id = None
 
         for turn in range(1, max_turns + 1):
             self.console.print(f"[dim]{phase_name} turn {turn}/{max_turns}...[/dim]")
 
             try:
-                response = self.client.responses.create(
-                    model=self.model_name,
-                    tools=[{"type": "web_search_preview"}],
-                    input=messages
-                )
+                request_params = {
+                    "model": self.model_name,
+                    "tools": [{"type": "web_search_preview"}],
+                    "instructions": system_instruction,
+                }
+
+                if previous_response_id:
+                    # Continue conversation using previous response ID
+                    request_params["previous_response_id"] = previous_response_id
+                    request_params["input"] = continue_message
+                else:
+                    # First turn
+                    request_params["input"] = user_message
+
+                response = self.client.responses.create(**request_params)
+                previous_response_id = response.id
+
             except Exception as e:
                 self.console.print(f"[red]API Error in {error_context}: {e}[/red]")
                 break
@@ -91,10 +99,6 @@ class CollAgentOpenAI(CollAgentBase):
 
                 last_response_length = len(response_text)
 
-            # Continue conversation
-            messages.append({"role": "assistant", "content": response_text})
-            messages.append({"role": "user", "content": continue_message})
-
         return "\n\n".join(accumulated_text)
 
     def _run_extraction_loop(self, system_instruction: str, user_message: str,
@@ -102,7 +106,7 @@ class CollAgentOpenAI(CollAgentBase):
                               on_save: callable, progress_message: str,
                               error_context: str, max_turns: int = 5) -> list:
         """
-        Run a function-calling extraction loop using chat completions.
+        Run a function-calling extraction loop using Responses API.
 
         Args:
             system_instruction: System prompt for extraction
@@ -119,61 +123,64 @@ class CollAgentOpenAI(CollAgentBase):
         """
         finish_func_schema = {
             "type": "function",
-            "function": {
-                "name": "finish_extraction",
-                "description": "Call this after saving all items.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "summary": {
-                            "type": "string",
-                            "description": "Brief summary"
-                        }
-                    },
-                    "required": ["summary"]
-                }
+            "name": "finish_extraction",
+            "description": "Call this after saving all items.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Brief summary"
+                    }
+                },
+                "required": ["summary"]
             }
         }
 
-        tools = [save_func_schema, finish_func_schema]
-        messages = [
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": user_message}
-        ]
+        # Convert save_func_schema to Responses API format
+        save_func = save_func_schema.get("function", save_func_schema)
+        save_tool = {
+            "type": "function",
+            "name": save_func.get("name", save_func_name),
+            "description": save_func.get("description", ""),
+            "parameters": save_func.get("parameters", {})
+        }
+
+        tools = [save_tool, finish_func_schema]
         items = []
 
+        # Initial request
+        self.console.print(f"[dim]{progress_message}[/dim]")
+        try:
+            response = self.client.responses.create(
+                model=self.model_name,
+                tools=tools,
+                instructions=system_instruction,
+                input=user_message,
+            )
+        except Exception as e:
+            self.console.print(f"[red]API Error in {error_context}: {e}[/red]")
+            return items
+
         for turn in range(max_turns):
-            self.console.print(f"[dim]{progress_message}[/dim]")
-
-            try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto",
-                    temperature=0.3
-                )
-            except Exception as e:
-                self.console.print(f"[red]API Error in {error_context}: {e}[/red]")
-                break
-
-            choice = response.choices[0]
-            message = choice.message
-
-            # Add assistant message to history
-            messages.append(message)
-
-            if not message.tool_calls:
-                break
-
-            # Process tool calls
-            tool_responses = []
+            # Process output items
+            tool_calls_to_process = []
             finished = False
 
-            for tc in message.tool_calls:
-                name = tc.function.name
+            for item in response.output:
+                if item.type == "function_call":
+                    tool_calls_to_process.append(item)
+
+            if not tool_calls_to_process:
+                # No function calls, model is done
+                break
+
+            # Process each function call and build results
+            tool_outputs = []
+            for tc in tool_calls_to_process:
+                name = tc.name
                 try:
-                    args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                    args = json.loads(tc.arguments) if tc.arguments else {}
                 except json.JSONDecodeError:
                     args = {}
 
@@ -187,16 +194,29 @@ class CollAgentOpenAI(CollAgentBase):
                 else:
                     result = f"Unknown: {name}"
 
-                tool_responses.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps({"result": result})
+                tool_outputs.append({
+                    "type": "function_call_output",
+                    "call_id": tc.call_id,
+                    "output": json.dumps({"result": result})
                 })
-
-            messages.extend(tool_responses)
 
             if finished:
                 break
+
+            # Submit tool outputs and get next response
+            if tool_outputs:
+                self.console.print(f"[dim]{progress_message}[/dim]")
+                try:
+                    response = self.client.responses.create(
+                        model=self.model_name,
+                        previous_response_id=response.id,
+                        input=tool_outputs,
+                        tools=tools,
+                        instructions=system_instruction,
+                    )
+                except Exception as e:
+                    self.console.print(f"[red]API Error submitting tool outputs: {e}[/red]")
+                    break
 
         return items
 
