@@ -518,6 +518,113 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
         .site-footer .license {
             margin-top: 0.5rem;
         }
+
+        /* Error Modal */
+        .error-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .error-modal-overlay.active {
+            display: flex;
+        }
+
+        .error-modal {
+            background: linear-gradient(135deg, #2d1b1b 0%, #1a1a2e 100%);
+            border: 1px solid rgba(248, 113, 113, 0.3);
+            border-radius: 16px;
+            padding: 2rem;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .error-modal-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .error-modal-icon {
+            width: 40px;
+            height: 40px;
+            background: rgba(248, 113, 113, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .error-modal-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #f87171;
+        }
+
+        .error-modal-body {
+            color: #e4e4e7;
+            margin-bottom: 1.5rem;
+        }
+
+        .error-modal-message {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 1rem;
+        }
+
+        .error-modal-footer {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+        }
+
+        .error-modal-btn {
+            padding: 0.5rem 1.25rem;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .error-modal-btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+        }
+
+        .error-modal-btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .error-modal-btn-secondary {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #a1a1aa;
+        }
+
+        .error-modal-btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
     </style>
 </head>
 <body>
@@ -774,6 +881,15 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                     searchBtn.className = 'btn btn-primary';
                     searchBtn.innerHTML = '<span>Start Search</span>';
                     eventSource.close();
+                } else if (msg.type === 'fatal_error') {
+                    // Show modal for catastrophic user-fixable errors
+                    showErrorModal(msg.text, msg.code, msg.help_url);
+                    statusIndicator.className = 'status-indicator status-error';
+                    statusText.textContent = 'Search failed';
+                    isSearching = false;
+                    searchBtn.className = 'btn btn-primary';
+                    searchBtn.innerHTML = '<span>Start Search</span>';
+                    eventSource.close();
                 }
             };
 
@@ -923,7 +1039,54 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
             document.getElementById('top_candidates').value = '5';
             document.getElementById('fileName').textContent = '';
         });
+
+        // Error modal functions
+        function showErrorModal(message, code, helpUrl) {
+            const modal = document.getElementById('errorModal');
+            const messageEl = document.getElementById('errorModalMessage');
+            const helpBtn = document.getElementById('errorModalHelpBtn');
+
+            messageEl.textContent = message;
+
+            if (helpUrl) {
+                helpBtn.href = helpUrl;
+                helpBtn.style.display = 'inline-block';
+            } else {
+                helpBtn.style.display = 'none';
+            }
+
+            modal.classList.add('active');
+        }
+
+        function closeErrorModal() {
+            document.getElementById('errorModal').classList.remove('active');
+        }
+
+        // Close modal on overlay click
+        document.getElementById('errorModal').addEventListener('click', (e) => {
+            if (e.target.id === 'errorModal') {
+                closeErrorModal();
+            }
+        });
     </script>
+
+    <!-- Error Modal -->
+    <div id="errorModal" class="error-modal-overlay">
+        <div class="error-modal">
+            <div class="error-modal-header">
+                <div class="error-modal-icon">⚠</div>
+                <div class="error-modal-title">API Error</div>
+            </div>
+            <div class="error-modal-body">
+                <p>A critical error occurred that requires your attention:</p>
+                <div id="errorModalMessage" class="error-modal-message"></div>
+            </div>
+            <div class="error-modal-footer">
+                <button class="error-modal-btn error-modal-btn-secondary" onclick="closeErrorModal()">Close</button>
+                <a id="errorModalHelpBtn" class="error-modal-btn error-modal-btn-primary" href="#" target="_blank">Get Help</a>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
 '''

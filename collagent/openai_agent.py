@@ -82,7 +82,8 @@ class CollAgentOpenAI(CollAgentBase):
                 previous_response_id = response.id
 
             except Exception as e:
-                self.console.print(f"[red]API Error in {error_context}: {e}[/red]")
+                if self._handle_api_error(e, error_context):
+                    return ""  # Fatal error - abort completely
                 break
 
             response_text = self._get_response_text(response)
@@ -168,7 +169,7 @@ class CollAgentOpenAI(CollAgentBase):
 
             response = self.client.responses.create(**request_params)
         except Exception as e:
-            self.console.print(f"[red]API Error in {error_context}: {e}[/red]")
+            self._handle_api_error(e, error_context)
             return items
 
         for turn in range(max_turns):
@@ -229,7 +230,7 @@ class CollAgentOpenAI(CollAgentBase):
 
                     response = self.client.responses.create(**request_params)
                 except Exception as e:
-                    self.console.print(f"[red]API Error submitting tool outputs: {e}[/red]")
+                    self._handle_api_error(e, "submitting tool outputs")
                     break
 
         return items

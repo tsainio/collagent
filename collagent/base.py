@@ -86,6 +86,58 @@ class CollAgentBase(ABC):
         """
         pass
 
+    # Fatal error codes that should trigger a modal (user-fixable issues)
+    FATAL_ERROR_PATTERNS = {
+        # OpenAI errors
+        "insufficient_quota": ("API quota exceeded", "https://platform.openai.com/account/billing"),
+        "invalid_api_key": ("Invalid API key", "https://platform.openai.com/api-keys"),
+        "rate_limit_exceeded": ("Rate limit exceeded", None),
+        # Google/Gemini errors
+        "RESOURCE_EXHAUSTED": ("API quota exhausted", "https://console.cloud.google.com/billing"),
+        "INVALID_ARGUMENT": ("Invalid API configuration", None),
+        "PERMISSION_DENIED": ("API permission denied", None),
+        "UNAUTHENTICATED": ("Invalid API key", "https://aistudio.google.com/apikey"),
+        # HTTP status codes
+        "401": ("Authentication failed - check your API key", None),
+        "403": ("Access forbidden - check API permissions", None),
+        "429": ("Too many requests - quota or rate limit exceeded", None),
+    }
+
+    def _handle_api_error(self, exception: Exception, context: str) -> bool:
+        """
+        Handle an API error, checking if it's a fatal (user-fixable) error.
+
+        Args:
+            exception: The exception that was raised
+            context: Context string for error messages (e.g., "Phase 1")
+
+        Returns:
+            True if it was a fatal error (modal shown), False otherwise
+        """
+        error_str = str(exception)
+
+        # Check for fatal error patterns
+        for pattern, (message, help_url) in self.FATAL_ERROR_PATTERNS.items():
+            if pattern.lower() in error_str.lower():
+                # It's a fatal error - show modal if console supports it
+                if hasattr(self.console, 'fatal_error'):
+                    self.console.fatal_error(
+                        f"{message}\n\n{error_str}",
+                        error_code=pattern,
+                        help_url=help_url
+                    )
+                else:
+                    # Fall back to regular print for CLI
+                    self.console.print(f"[bold red]{message}[/bold red]")
+                    self.console.print(f"[red]{error_str}[/red]")
+                    if help_url:
+                        self.console.print(f"[dim]More info: {help_url}[/dim]")
+                return True
+
+        # Not a fatal error - just print it normally
+        self.console.print(f"[red]API Error in {context}: {exception}[/red]")
+        return False
+
     def print_shortlist(self, top_n: int = 5):
         """Print a shortlist table of top candidates to console."""
         if not self.collaborators:

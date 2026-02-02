@@ -36,6 +36,27 @@ class StreamingConsole:
         """Get the current section for this thread."""
         return getattr(self._thread_local, 'section', None)
 
+    def fatal_error(self, message: str, error_code: str = None, help_url: str = None):
+        """Send a fatal error that should be shown as a modal to the user.
+
+        Use this for catastrophic errors that are user-fixable (billing, auth, etc.)
+        rather than transient errors that might resolve on retry.
+
+        Args:
+            message: The error message to display
+            error_code: Optional error code (e.g., 'insufficient_quota', 'invalid_api_key')
+            help_url: Optional URL for more information
+        """
+        msg = {
+            "type": "fatal_error",
+            "text": message,
+        }
+        if error_code:
+            msg["code"] = error_code
+        if help_url:
+            msg["help_url"] = help_url
+        self.queue.put(msg)
+
     def print(self, *args, section: str = None, **kwargs):
         """Capture print output and send to queue.
 

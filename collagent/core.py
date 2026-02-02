@@ -82,7 +82,8 @@ class CollAgentGoogle(CollAgentBase):
                     config=config,
                 )
             except Exception as e:
-                self.console.print(f"[red]API Error in {error_context}: {e}[/red]")
+                if self._handle_api_error(e, error_context):
+                    return ""  # Fatal error - abort completely
                 break
 
             response_text = self.get_response_text(response)
@@ -172,7 +173,8 @@ class CollAgentGoogle(CollAgentBase):
                     config=config,
                 )
             except Exception as e:
-                self.console.print(f"[red]API Error in {error_context}: {e}[/red]")
+                if self._handle_api_error(e, error_context):
+                    return items  # Fatal error - abort completely
                 break
 
             function_calls = self.parse_function_calls(response)

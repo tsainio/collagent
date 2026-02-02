@@ -248,7 +248,7 @@ def create_web_app():
                     msg = output_queue.get(timeout=180)  # Extended for GPT-5.2 reasoning models
                     yield f"data: {json.dumps(msg)}\n\n"
 
-                    if msg.get('type') in ('complete', 'error'):
+                    if msg.get('type') in ('complete', 'error', 'fatal_error'):
                         break
                 except Exception:
                     yield f"data: {json.dumps({'type': 'error', 'text': 'Search timeout'})}\n\n"
