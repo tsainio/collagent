@@ -17,7 +17,7 @@ from rich.panel import Panel
 from .template import WEB_TEMPLATE
 from .streaming import console, search_results, search_results_lock, StreamingConsole
 from .core import HTML_REPORT_TEMPLATE
-from .config import get_available_models, get_default_model, get_available_search_tools
+from .config import get_available_models, get_default_model, get_available_search_tools, get_all_search_tools
 from .factory import create_agent
 
 # Flask imports (optional for web mode)
@@ -68,8 +68,8 @@ def create_web_app():
 
     @app.route('/api/search-tools')
     def api_search_tools():
-        """Return available search tools (those with API keys set)."""
-        tools = get_available_search_tools()
+        """Return all configured search tools with availability status."""
+        tools = get_all_search_tools()
         return jsonify(tools)
 
     @app.route('/search')

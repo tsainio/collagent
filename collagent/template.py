@@ -702,6 +702,51 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                     </div>
                 </div>
 
+                <h3 class="subsection-title">Advanced</h3>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="search_tool">Search Tool</label>
+                        <select id="search_tool" name="search_tool">
+                            <option value="">Built-in (default)</option>
+                        </select>
+                        <p class="help-text">Use an external search API instead of provider's built-in</p>
+                    </div>
+                    <div class="form-group" id="searchToolApiKeyGroup" style="display: none;">
+                        <label for="search_tool_api_key">Search Tool API Key</label>
+                        <input type="text" id="search_tool_api_key" name="search_tool_api_key" placeholder="Leave empty to use env variable">
+                        <p class="help-text">Overrides TAVILY_API_KEY / BRAVE_SEARCH_API_KEY</p>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="processing_model">Processing Model</label>
+                        <select id="processing_model" name="processing_model">
+                            <option value="">Same as search model (default)</option>
+                        </select>
+                        <p class="help-text">Use a different model for data extraction</p>
+                    </div>
+                    <div class="form-group" id="processingCustomGroup" style="display: none;">
+                        <label for="processing_model_custom">Custom Model Name</label>
+                        <input type="text" id="processing_model_custom" name="processing_model_custom" placeholder="e.g., llama3.3">
+                        <p class="help-text">Model name/ID for the local API server</p>
+                    </div>
+                </div>
+
+                <div class="form-row" id="processingExtraGroup" style="display: none;">
+                    <div class="form-group">
+                        <label for="processing_base_url">Processing Base URL</label>
+                        <input type="text" id="processing_base_url" name="processing_base_url" placeholder="e.g., http://localhost:11434/v1">
+                        <p class="help-text">Required for local/custom models</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="processing_api_key">Processing API Key</label>
+                        <input type="text" id="processing_api_key" name="processing_api_key" placeholder="Leave empty to use env variable">
+                        <p class="help-text">Overrides the default API key for this model</p>
+                    </div>
+                </div>
+
                 <button type="submit" class="btn btn-primary" id="searchBtn">
                     <span>Start Search</span>
                 </button>
@@ -755,6 +800,12 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
         let eventSource = null;
         let isSearching = false;
 
+        const searchToolSelect = document.getElementById('search_tool');
+        const searchToolApiKeyGroup = document.getElementById('searchToolApiKeyGroup');
+        const processingModelSelect = document.getElementById('processing_model');
+        const processingCustomGroup = document.getElementById('processingCustomGroup');
+        const processingExtraGroup = document.getElementById('processingExtraGroup');
+
         // Load available models on page load
         async function loadModels() {
             try {
@@ -763,14 +814,17 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
 
                 modelSelect.innerHTML = '';
 
-                if (models.length === 0) {
+                // Filter: main model selector excludes processing_only models
+                const searchModels = models.filter(m => !m.processing_only);
+
+                if (searchModels.length === 0) {
                     modelSelect.innerHTML = '<option value="">No models available</option>';
                     modelHelp.textContent = 'Set GOOGLE_API_KEY or OPENAI_API_KEY to enable models';
                     searchBtn.disabled = true;
                     return;
                 }
 
-                models.forEach(m => {
+                searchModels.forEach(m => {
                     const option = document.createElement('option');
                     option.value = m.id;
                     option.textContent = `${m.display_name} [${m.provider}]`;
@@ -781,8 +835,24 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                 });
 
                 // Update help text with provider info
-                const providers = [...new Set(models.map(m => m.provider))];
+                const providers = [...new Set(searchModels.map(m => m.provider))];
                 modelHelp.textContent = `Available providers: ${providers.join(', ')}`;
+
+                // Populate processing model selector with ALL models
+                processingModelSelect.innerHTML = '<option value="">Same as search model (default)</option>';
+                models.forEach(m => {
+                    const option = document.createElement('option');
+                    option.value = m.id;
+                    let label = `${m.display_name} [${m.provider}]`;
+                    if (m.processing_only) label += ' (extraction only)';
+                    option.textContent = label;
+                    processingModelSelect.appendChild(option);
+                });
+                // Add custom option
+                const customOpt = document.createElement('option');
+                customOpt.value = '__custom__';
+                customOpt.textContent = 'Custom (local model)...';
+                processingModelSelect.appendChild(customOpt);
 
             } catch (error) {
                 modelSelect.innerHTML = '<option value="">Error loading models</option>';
@@ -791,8 +861,54 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
             }
         }
 
-        // Load models when page loads
+        // Load available search tools on page load
+        async function loadSearchTools() {
+            try {
+                const response = await fetch('/api/search-tools');
+                const tools = await response.json();
+
+                // Keep the default option, add tools
+                tools.forEach(t => {
+                    const option = document.createElement('option');
+                    option.value = t.name;
+                    let label = t.name.charAt(0).toUpperCase() + t.name.slice(1);
+                    if (t.ready) {
+                        label += ' (ready)';
+                    } else {
+                        label += ' (needs API key)';
+                    }
+                    option.textContent = label;
+                    searchToolSelect.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load search tools:', error);
+            }
+        }
+
+        // Show/hide conditional fields
+        searchToolSelect.addEventListener('change', () => {
+            searchToolApiKeyGroup.style.display = searchToolSelect.value ? '' : 'none';
+        });
+
+        processingModelSelect.addEventListener('change', () => {
+            const val = processingModelSelect.value;
+            const isCustom = val === '__custom__';
+            const isSet = val !== '';
+
+            processingCustomGroup.style.display = isCustom ? '' : 'none';
+            processingExtraGroup.style.display = isCustom ? '' : 'none';
+
+            // For known non-default models, show just the API key override
+            if (isSet && !isCustom) {
+                processingExtraGroup.style.display = '';
+                // Hide base URL for known cloud models, show for openai_compatible
+                // We just show both and let the user decide — base URL is optional for cloud
+            }
+        });
+
+        // Load models and search tools when page loads
         loadModels();
+        loadSearchTools();
 
         function stopSearch() {
             if (eventSource) {
@@ -843,6 +959,18 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
             // Build form data
             const formData = new FormData(form);
             const data = Object.fromEntries(formData.entries());
+
+            // Handle custom processing model
+            if (data.processing_model === '__custom__') {
+                data.processing_model = data.processing_model_custom || '';
+            }
+            delete data.processing_model_custom;
+
+            // Remove empty optional fields to keep URL clean
+            ['search_tool', 'search_tool_api_key', 'processing_model',
+             'processing_base_url', 'processing_api_key'].forEach(key => {
+                if (!data[key]) delete data[key];
+            });
 
             // Close any existing connection
             if (eventSource) {
@@ -1038,6 +1166,12 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
             document.getElementById('max_turns').value = '10';
             document.getElementById('top_candidates').value = '5';
             document.getElementById('fileName').textContent = '';
+            // Reset advanced fields
+            searchToolSelect.value = '';
+            searchToolApiKeyGroup.style.display = 'none';
+            processingModelSelect.value = '';
+            processingCustomGroup.style.display = 'none';
+            processingExtraGroup.style.display = 'none';
         });
 
         // Error modal functions

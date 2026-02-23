@@ -107,6 +107,18 @@ def get_available_search_tools() -> list:
     return available
 
 
+def get_all_search_tools() -> list:
+    """Return all configured search tools with availability status."""
+    config = load_config()
+    tools_config = config.get("search_tools", {})
+    result = []
+    for name, tool_conf in tools_config.items():
+        env_key = tool_conf.get("env_key")
+        ready = bool(env_key and os.environ.get(env_key))
+        result.append({"name": name, "ready": ready})
+    return result
+
+
 def get_model_ids() -> list:
     """Return a list of all model IDs."""
     return [m.get("id") for m in get_models()]
