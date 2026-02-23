@@ -246,7 +246,7 @@ class CollAgentBase(ABC):
         did_search = False      # Whether any searches were performed
 
         while text_turns < max_turns and search_rounds < max_search_rounds:
-            self.console.print(f"[dim]{phase_name} turn {text_turns + 1}/{max_turns}...[/dim]")
+            self.console.print(f"[dim]{phase_name} round {search_rounds + text_turns + 1}...[/dim]")
 
             try:
                 response = client.chat.completions.create(
