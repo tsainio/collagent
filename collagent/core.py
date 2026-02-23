@@ -52,6 +52,135 @@ class CollAgentGoogle(CollAgentBase):
             pass
         return calls
 
+    def _run_tool_based_search(self, system_instruction: str, user_message: str,
+                                continue_message: str, max_turns: int,
+                                phase_name: str, error_context: str) -> str:
+        """
+        Override base method: if we have an OpenAI search client, use it.
+        Otherwise, use the genai client with function calling for the search LLM.
+        """
+        if self._get_search_llm_client() is not None and self.search_client is not None:
+            # We have an explicit OpenAI search client — use the base Chat Completions method
+            return super()._run_tool_based_search(
+                system_instruction, user_message, continue_message,
+                max_turns, phase_name, error_context
+            )
+
+        # Use genai function calling with the external search tool
+        return self._run_tool_based_search_genai(
+            system_instruction, user_message, continue_message,
+            max_turns, phase_name, error_context
+        )
+
+    def _run_tool_based_search_genai(self, system_instruction: str, user_message: str,
+                                      continue_message: str, max_turns: int,
+                                      phase_name: str, error_context: str) -> str:
+        """
+        Multi-turn search using external search tool + Google genai function calling.
+        Used when the Google agent has a search_tool but no OpenAI search client.
+        """
+        import json
+
+        web_search_func = types.FunctionDeclaration(
+            name="web_search",
+            description="Search the web for information. Returns a list of results with titles, URLs, and content snippets.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "query": types.Schema(type=types.Type.STRING, description="The search query"),
+                },
+                required=["query"]
+            )
+        )
+
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            tools=[types.Tool(function_declarations=[web_search_func])],
+            temperature=0.7,
+        )
+
+        contents = [types.Content(role="user", parts=[types.Part(text=user_message)])]
+        accumulated_text = []
+        last_response_length = 0
+
+        turn = 0
+        while turn < max_turns:
+            turn += 1
+            self.console.print(f"[dim]{phase_name} turn {turn}/{max_turns}...[/dim]")
+
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=config,
+                )
+            except Exception as e:
+                if self._handle_api_error(e, error_context):
+                    return ""
+                break
+
+            # Check for function calls
+            function_calls = self.parse_function_calls(response)
+
+            if function_calls:
+                # Append assistant response
+                if response.candidates and response.candidates[0].content:
+                    contents.append(response.candidates[0].content)
+
+                function_responses = []
+                for fc in function_calls:
+                    if fc.name == "web_search":
+                        args = dict(fc.args) if fc.args else {}
+                        query = args.get("query", "")
+                        self.console.print(f"[dim]  Searching: {query}[/dim]")
+                        try:
+                            results = self.search_tool.search(query)
+                            result_text = json.dumps(results, ensure_ascii=False)
+                        except Exception as e:
+                            result_text = json.dumps({"error": str(e)})
+                    else:
+                        result_text = json.dumps({"error": f"Unknown function: {fc.name}"})
+
+                    function_responses.append(types.Part(
+                        function_response=types.FunctionResponse(
+                            name=fc.name,
+                            response={"result": result_text}
+                        )
+                    ))
+
+                contents.append(types.Content(role="user", parts=function_responses))
+                continue
+
+            # No function calls — check for text content
+            response_text = self.get_response_text(response)
+            if response_text:
+                accumulated_text.append(response_text)
+                preview = response_text[:400] + "..." if len(response_text) > 400 else response_text
+                self.console.print(f"[dim]{preview}[/dim]")
+
+                if "SEARCH COMPLETE" in response_text.upper():
+                    self.console.print("[dim]Search complete signal received.[/dim]")
+                    break
+
+                if last_response_length > 0 and len(response_text) < last_response_length * 0.3:
+                    self.console.print("[dim]Diminishing returns detected, stopping.[/dim]")
+                    break
+
+                last_response_length = len(response_text)
+
+                # Continue conversation
+                if response.candidates and response.candidates[0].content:
+                    contents.append(response.candidates[0].content)
+                    contents.append(types.Content(
+                        role="user",
+                        parts=[types.Part(text=continue_message)]
+                    ))
+            else:
+                if accumulated_text:
+                    break
+
+        return "\n\n".join(accumulated_text)
+
     def _run_grounded_search(self, system_instruction: str, user_message: str,
                               continue_message: str, max_turns: int,
                               phase_name: str, error_context: str) -> str:
@@ -222,7 +351,8 @@ class CollAgentGoogle(CollAgentBase):
         Phase 1: Use Google Search grounding to research potential collaborators.
         Returns accumulated research text.
         """
-        self.console.print("[cyan]Phase 1: Researching with Google Search...[/cyan]")
+        search_method = "external search tool" if self.search_tool else "Google Search"
+        self.console.print(f"[cyan]Phase 1: Researching with {search_method}...[/cyan]")
 
         system_instruction = """You are a research assistant finding potential collaborators.
 
@@ -250,6 +380,16 @@ IMPORTANT: When you have gathered sufficient information about 3-5 good candidat
 
 Search for researchers and gather detailed information about promising matches. When done, say "SEARCH COMPLETE"."""
 
+        if self.search_tool:
+            return self._run_tool_based_search(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                continue_message="Continue searching. If you have found enough candidates (3-5), provide a summary and say 'SEARCH COMPLETE'.",
+                max_turns=max_turns,
+                phase_name="Research",
+                error_context="Phase 1"
+            )
+
         return self._run_grounded_search(
             system_instruction=system_instruction,
             user_message=user_message,
@@ -264,26 +404,6 @@ Search for researchers and gather detailed information about promising matches. 
         Phase 2: Use function calling to extract structured collaborator data.
         """
         self.console.print("\n[cyan]Phase 2: Extracting structured data...[/cyan]")
-
-        save_collaborator_func = types.FunctionDeclaration(
-            name="save_collaborator",
-            description="Save a potential collaborator. Call this for each researcher found.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "name": types.Schema(type=types.Type.STRING, description="Researcher's full name"),
-                    "position": types.Schema(type=types.Type.STRING, description="Current position/title"),
-                    "institution": types.Schema(type=types.Type.STRING, description="Institution name"),
-                    "email": types.Schema(type=types.Type.STRING, description="Contact email if found"),
-                    "research_focus": types.Schema(type=types.Type.STRING, description="Their main research areas"),
-                    "alignment_score": types.Schema(type=types.Type.INTEGER, description="Alignment with user's research (1-5). Be critical: 5=exceptional direct overlap, 4=strong overlap, 3=moderate relevance, 2=weak connection, 1=minimal relevance"),
-                    "alignment_reasons": types.Schema(type=types.Type.STRING, description="Why this person is a good match"),
-                    "key_publications": types.Schema(type=types.Type.STRING, description="Relevant recent publications"),
-                    "collaboration_angle": types.Schema(type=types.Type.STRING, description="Suggested collaboration approach"),
-                },
-                required=["name", "institution", "research_focus", "alignment_score", "alignment_reasons"]
-            )
-        )
 
         system_instruction = """Extract collaborator information from the research text and save each one using save_collaborator.
 
@@ -317,15 +437,129 @@ Call save_collaborator for each researcher, then finish_extraction when done."""
             score = args.get("alignment_score", "?")
             return (name, f"alignment: {score}", f"Saved: {name}")
 
-        self._run_extraction_loop(
-            system_instruction=system_instruction,
-            user_message=user_message,
-            save_func=save_collaborator_func,
-            save_func_name="save_collaborator",
-            on_save=on_save_collaborator,
-            progress_message="Extracting data...",
-            error_context="Phase 2"
-        )
+        # Route to appropriate extraction method based on processing provider
+        if self.processing_provider in ("openai_compatible", "openai"):
+            save_collaborator_schema = {
+                "name": "save_collaborator",
+                "description": "Save a potential collaborator. Call this for each researcher found.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Researcher's full name"},
+                        "position": {"type": "string", "description": "Current position/title"},
+                        "institution": {"type": "string", "description": "Institution name"},
+                        "email": {"type": "string", "description": "Contact email if found"},
+                        "research_focus": {"type": "string", "description": "Their main research areas"},
+                        "alignment_score": {"type": "integer", "description": "Alignment with user's research (1-5). Be critical: 5=exceptional direct overlap, 4=strong overlap, 3=moderate relevance, 2=weak connection, 1=minimal relevance"},
+                        "alignment_reasons": {"type": "string", "description": "Why this person is a good match"},
+                        "key_publications": {"type": "string", "description": "Relevant recent publications"},
+                        "collaboration_angle": {"type": "string", "description": "Suggested collaboration approach"},
+                    },
+                    "required": ["name", "institution", "research_focus", "alignment_score", "alignment_reasons"]
+                }
+            }
+
+            self._run_chat_completions_extraction(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                save_func_schema=save_collaborator_schema,
+                save_func_name="save_collaborator",
+                on_save=on_save_collaborator,
+                progress_message="Extracting data...",
+                error_context="Phase 2"
+            )
+        elif self.processing_provider == "google":
+            # Use genai extraction with the processing model
+            save_collaborator_schema = {
+                "name": "save_collaborator",
+                "description": "Save a potential collaborator. Call this for each researcher found.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Researcher's full name"},
+                        "position": {"type": "string", "description": "Current position/title"},
+                        "institution": {"type": "string", "description": "Institution name"},
+                        "email": {"type": "string", "description": "Contact email if found"},
+                        "research_focus": {"type": "string", "description": "Their main research areas"},
+                        "alignment_score": {"type": "integer", "description": "Alignment with user's research (1-5). Be critical: 5=exceptional direct overlap, 4=strong overlap, 3=moderate relevance, 2=weak connection, 1=minimal relevance"},
+                        "alignment_reasons": {"type": "string", "description": "Why this person is a good match"},
+                        "key_publications": {"type": "string", "description": "Relevant recent publications"},
+                        "collaboration_angle": {"type": "string", "description": "Suggested collaboration approach"},
+                    },
+                    "required": ["name", "institution", "research_focus", "alignment_score", "alignment_reasons"]
+                }
+            }
+
+            # Temporarily swap model name for extraction
+            orig_model = self.model_name
+            self.model_name = self.processing_model_name
+            orig_client = self.client
+            self.client = self.processing_client
+
+            save_collaborator_func = types.FunctionDeclaration(
+                name="save_collaborator",
+                description="Save a potential collaborator. Call this for each researcher found.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "name": types.Schema(type=types.Type.STRING, description="Researcher's full name"),
+                        "position": types.Schema(type=types.Type.STRING, description="Current position/title"),
+                        "institution": types.Schema(type=types.Type.STRING, description="Institution name"),
+                        "email": types.Schema(type=types.Type.STRING, description="Contact email if found"),
+                        "research_focus": types.Schema(type=types.Type.STRING, description="Their main research areas"),
+                        "alignment_score": types.Schema(type=types.Type.INTEGER, description="Alignment with user's research (1-5). Be critical: 5=exceptional direct overlap, 4=strong overlap, 3=moderate relevance, 2=weak connection, 1=minimal relevance"),
+                        "alignment_reasons": types.Schema(type=types.Type.STRING, description="Why this person is a good match"),
+                        "key_publications": types.Schema(type=types.Type.STRING, description="Relevant recent publications"),
+                        "collaboration_angle": types.Schema(type=types.Type.STRING, description="Suggested collaboration approach"),
+                    },
+                    required=["name", "institution", "research_focus", "alignment_score", "alignment_reasons"]
+                )
+            )
+
+            try:
+                self._run_extraction_loop(
+                    system_instruction=system_instruction,
+                    user_message=user_message,
+                    save_func=save_collaborator_func,
+                    save_func_name="save_collaborator",
+                    on_save=on_save_collaborator,
+                    progress_message="Extracting data...",
+                    error_context="Phase 2"
+                )
+            finally:
+                self.model_name = orig_model
+                self.client = orig_client
+        else:
+            # Default: use native genai extraction with main model
+            save_collaborator_func = types.FunctionDeclaration(
+                name="save_collaborator",
+                description="Save a potential collaborator. Call this for each researcher found.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "name": types.Schema(type=types.Type.STRING, description="Researcher's full name"),
+                        "position": types.Schema(type=types.Type.STRING, description="Current position/title"),
+                        "institution": types.Schema(type=types.Type.STRING, description="Institution name"),
+                        "email": types.Schema(type=types.Type.STRING, description="Contact email if found"),
+                        "research_focus": types.Schema(type=types.Type.STRING, description="Their main research areas"),
+                        "alignment_score": types.Schema(type=types.Type.INTEGER, description="Alignment with user's research (1-5). Be critical: 5=exceptional direct overlap, 4=strong overlap, 3=moderate relevance, 2=weak connection, 1=minimal relevance"),
+                        "alignment_reasons": types.Schema(type=types.Type.STRING, description="Why this person is a good match"),
+                        "key_publications": types.Schema(type=types.Type.STRING, description="Relevant recent publications"),
+                        "collaboration_angle": types.Schema(type=types.Type.STRING, description="Suggested collaboration approach"),
+                    },
+                    required=["name", "institution", "research_focus", "alignment_score", "alignment_reasons"]
+                )
+            )
+
+            self._run_extraction_loop(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                save_func=save_collaborator_func,
+                save_func_name="save_collaborator",
+                on_save=on_save_collaborator,
+                progress_message="Extracting data...",
+                error_context="Phase 2"
+            )
 
         return self.collaborators
 
@@ -366,6 +600,16 @@ IMPORTANT: When you have gathered sufficient information about 5-10 good institu
 
 Search for universities and research institutes that are strong in these areas. When done, say "SEARCH COMPLETE"."""
 
+        if self.search_tool:
+            return self._run_tool_based_search(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                continue_message="Continue searching. If you have found enough institutions (5-10), provide a summary and say 'SEARCH COMPLETE'.",
+                max_turns=max_turns,
+                phase_name="Institution discovery",
+                error_context="Institution Discovery"
+            )
+
         return self._run_grounded_search(
             system_instruction=system_instruction,
             user_message=user_message,
@@ -381,24 +625,6 @@ Search for universities and research institutes that are strong in these areas. 
         Uses function calling to save institution information.
         """
         self.console.print("\n[cyan]Extracting institution data...[/cyan]")
-
-        save_institution_func = types.FunctionDeclaration(
-            name="save_institution",
-            description="Save a potential institution for collaboration. Call this for each institution found.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "name": types.Schema(type=types.Type.STRING, description="Institution name (e.g., 'ETH Zürich', 'LUT University')"),
-                    "department": types.Schema(type=types.Type.STRING, description="Relevant department or school"),
-                    "country": types.Schema(type=types.Type.STRING, description="Country where the institution is located"),
-                    "city": types.Schema(type=types.Type.STRING, description="City where the institution is located"),
-                    "relevance_score": types.Schema(type=types.Type.INTEGER, description="Relevance to user's research (1-5). Be critical: 5=world-leading in exact area, 4=strong program, 3=relevant but not specialized, 2=tangential, 1=weak fit"),
-                    "reason": types.Schema(type=types.Type.STRING, description="Why this institution is a good match"),
-                    "key_groups": types.Schema(type=types.Type.STRING, description="Key research groups or centers"),
-                },
-                required=["name", "country", "relevance_score", "reason"]
-            )
-        )
 
         system_instruction = """Extract institution information from the research text and save each one using save_institution.
 
@@ -430,15 +656,101 @@ Call save_institution for each institution, then finish_extraction when done."""
             score = args.get("relevance_score", "?")
             return (name, f"relevance: {score}", f"Saved: {name}")
 
-        institutions = self._run_extraction_loop(
-            system_instruction=system_instruction,
-            user_message=user_message,
-            save_func=save_institution_func,
-            save_func_name="save_institution",
-            on_save=on_save_institution,
-            progress_message="Extracting institutions...",
-            error_context="Institution Extraction"
-        )
+        save_institution_json_schema = {
+            "name": "save_institution",
+            "description": "Save a potential institution for collaboration. Call this for each institution found.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Institution name (e.g., 'ETH Zürich', 'LUT University')"},
+                    "department": {"type": "string", "description": "Relevant department or school"},
+                    "country": {"type": "string", "description": "Country where the institution is located"},
+                    "city": {"type": "string", "description": "City where the institution is located"},
+                    "relevance_score": {"type": "integer", "description": "Relevance to user's research (1-5). Be critical: 5=world-leading in exact area, 4=strong program, 3=relevant but not specialized, 2=tangential, 1=weak fit"},
+                    "reason": {"type": "string", "description": "Why this institution is a good match"},
+                    "key_groups": {"type": "string", "description": "Key research groups or centers"},
+                },
+                "required": ["name", "country", "relevance_score", "reason"]
+            }
+        }
+
+        if self.processing_provider in ("openai_compatible", "openai"):
+            institutions = self._run_chat_completions_extraction(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                save_func_schema=save_institution_json_schema,
+                save_func_name="save_institution",
+                on_save=on_save_institution,
+                progress_message="Extracting institutions...",
+                error_context="Institution Extraction"
+            )
+        elif self.processing_provider == "google":
+            # Use genai with the processing model
+            save_institution_func = types.FunctionDeclaration(
+                name="save_institution",
+                description="Save a potential institution for collaboration. Call this for each institution found.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "name": types.Schema(type=types.Type.STRING, description="Institution name (e.g., 'ETH Zürich', 'LUT University')"),
+                        "department": types.Schema(type=types.Type.STRING, description="Relevant department or school"),
+                        "country": types.Schema(type=types.Type.STRING, description="Country where the institution is located"),
+                        "city": types.Schema(type=types.Type.STRING, description="City where the institution is located"),
+                        "relevance_score": types.Schema(type=types.Type.INTEGER, description="Relevance to user's research (1-5). Be critical: 5=world-leading in exact area, 4=strong program, 3=relevant but not specialized, 2=tangential, 1=weak fit"),
+                        "reason": types.Schema(type=types.Type.STRING, description="Why this institution is a good match"),
+                        "key_groups": types.Schema(type=types.Type.STRING, description="Key research groups or centers"),
+                    },
+                    required=["name", "country", "relevance_score", "reason"]
+                )
+            )
+
+            orig_model = self.model_name
+            orig_client = self.client
+            self.model_name = self.processing_model_name
+            self.client = self.processing_client
+
+            try:
+                institutions = self._run_extraction_loop(
+                    system_instruction=system_instruction,
+                    user_message=user_message,
+                    save_func=save_institution_func,
+                    save_func_name="save_institution",
+                    on_save=on_save_institution,
+                    progress_message="Extracting institutions...",
+                    error_context="Institution Extraction"
+                )
+            finally:
+                self.model_name = orig_model
+                self.client = orig_client
+        else:
+            # Default: use native genai extraction with main model
+            save_institution_func = types.FunctionDeclaration(
+                name="save_institution",
+                description="Save a potential institution for collaboration. Call this for each institution found.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "name": types.Schema(type=types.Type.STRING, description="Institution name (e.g., 'ETH Zürich', 'LUT University')"),
+                        "department": types.Schema(type=types.Type.STRING, description="Relevant department or school"),
+                        "country": types.Schema(type=types.Type.STRING, description="Country where the institution is located"),
+                        "city": types.Schema(type=types.Type.STRING, description="City where the institution is located"),
+                        "relevance_score": types.Schema(type=types.Type.INTEGER, description="Relevance to user's research (1-5). Be critical: 5=world-leading in exact area, 4=strong program, 3=relevant but not specialized, 2=tangential, 1=weak fit"),
+                        "reason": types.Schema(type=types.Type.STRING, description="Why this institution is a good match"),
+                        "key_groups": types.Schema(type=types.Type.STRING, description="Key research groups or centers"),
+                    },
+                    required=["name", "country", "relevance_score", "reason"]
+                )
+            )
+
+            institutions = self._run_extraction_loop(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                save_func=save_institution_func,
+                save_func_name="save_institution",
+                on_save=on_save_institution,
+                progress_message="Extracting institutions...",
+                error_context="Institution Extraction"
+            )
 
         # Sort by relevance score
         institutions.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)

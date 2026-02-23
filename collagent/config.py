@@ -62,16 +62,48 @@ def get_available_models() -> list:
     """
     Return models whose provider API key is set in the environment.
 
-    This filters models to only those that can actually be used,
-    based on whether the required API key environment variable is set.
+    For openai_compatible providers, a model is available if it has a base_url set.
     """
     available = []
     for model in get_models():
         provider = model.get("provider")
-        provider_config = get_provider_config(provider)
-        env_key = provider_config.get("env_key")
+        if provider == "openai_compatible":
+            # Available if base_url is configured in the model entry
+            if model.get("base_url"):
+                available.append(model)
+        else:
+            provider_config = get_provider_config(provider)
+            env_key = provider_config.get("env_key")
+            if env_key and os.environ.get(env_key):
+                available.append(model)
+    return available
+
+
+def get_search_models() -> list:
+    """Return available models that can perform search (not processing_only)."""
+    return [m for m in get_available_models() if not m.get("processing_only")]
+
+
+def get_processing_models() -> list:
+    """Return available models that can process/extract (all models can process)."""
+    return get_available_models()
+
+
+def get_search_tool_config(tool_name: str) -> dict:
+    """Get search tool configuration by name."""
+    config = load_config()
+    return config.get("search_tools", {}).get(tool_name, {})
+
+
+def get_available_search_tools() -> list:
+    """Return search tools whose API keys are set in the environment."""
+    config = load_config()
+    tools_config = config.get("search_tools", {})
+    available = []
+    for name, tool_conf in tools_config.items():
+        env_key = tool_conf.get("env_key")
         if env_key and os.environ.get(env_key):
-            available.append(model)
+            available.append({"name": name, "env_key": env_key})
     return available
 
 

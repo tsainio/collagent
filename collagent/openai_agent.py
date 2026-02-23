@@ -103,6 +103,11 @@ class CollAgentOpenAI(CollAgentBase):
                     break
 
                 last_response_length = len(response_text)
+            else:
+                self.console.print("[dim]No text in response.[/dim]")
+                if accumulated_text:
+                    self.console.print("[dim]Stopping - already have research data.[/dim]")
+                    break
 
         return "\n\n".join(accumulated_text)
 
@@ -241,7 +246,8 @@ class CollAgentOpenAI(CollAgentBase):
         Phase 1: Use web search to research potential collaborators.
         Returns accumulated research text.
         """
-        self.console.print("[cyan]Phase 1: Researching with web search...[/cyan]")
+        search_method = "external search tool" if self.search_tool else "web search"
+        self.console.print(f"[cyan]Phase 1: Researching with {search_method}...[/cyan]")
 
         system_instruction = """You are a research assistant finding potential collaborators.
 
@@ -268,6 +274,16 @@ IMPORTANT: When you have gathered sufficient information about 3-5 good candidat
 - Focus Areas: {", ".join(focus_areas) if focus_areas else "Based on my profile"}
 
 Search for researchers and gather detailed information about promising matches. When done, say "SEARCH COMPLETE"."""
+
+        if self.search_tool:
+            return self._run_tool_based_search(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                continue_message="Continue searching. If you have found enough candidates (3-5), provide a summary and say 'SEARCH COMPLETE'.",
+                max_turns=max_turns,
+                phase_name="Research",
+                error_context="Phase 1"
+            )
 
         return self._run_web_search(
             system_instruction=system_instruction,
@@ -339,15 +355,58 @@ Call save_collaborator for each researcher, then finish_extraction when done."""
             score = args.get("alignment_score", "?")
             return (name, f"alignment: {score}", f"Saved: {name}")
 
-        self._run_extraction_loop(
-            system_instruction=system_instruction,
-            user_message=user_message,
-            save_func_schema=save_collaborator_schema,
-            save_func_name="save_collaborator",
-            on_save=on_save_collaborator,
-            progress_message="Extracting data...",
-            error_context="Phase 2"
-        )
+        # Route to appropriate extraction method based on processing provider
+        if self.processing_provider in ("openai_compatible",):
+            self._run_chat_completions_extraction(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                save_func_schema=save_collaborator_schema,
+                save_func_name="save_collaborator",
+                on_save=on_save_collaborator,
+                progress_message="Extracting data...",
+                error_context="Phase 2"
+            )
+        elif self.processing_provider == "openai":
+            # Use Responses API with the processing model
+            orig_model = self.model_name
+            orig_client = self.client
+            self.model_name = self.processing_model_name
+            self.client = self.processing_client
+
+            try:
+                self._run_extraction_loop(
+                    system_instruction=system_instruction,
+                    user_message=user_message,
+                    save_func_schema=save_collaborator_schema,
+                    save_func_name="save_collaborator",
+                    on_save=on_save_collaborator,
+                    progress_message="Extracting data...",
+                    error_context="Phase 2"
+                )
+            finally:
+                self.model_name = orig_model
+                self.client = orig_client
+        elif self.processing_provider == "google":
+            self._run_genai_extraction(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                save_func_schema=save_collaborator_schema,
+                save_func_name="save_collaborator",
+                on_save=on_save_collaborator,
+                progress_message="Extracting data...",
+                error_context="Phase 2"
+            )
+        else:
+            # Default: use native Responses API extraction with main model
+            self._run_extraction_loop(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                save_func_schema=save_collaborator_schema,
+                save_func_name="save_collaborator",
+                on_save=on_save_collaborator,
+                progress_message="Extracting data...",
+                error_context="Phase 2"
+            )
 
         return self.collaborators
 
@@ -387,6 +446,16 @@ IMPORTANT: When you have gathered sufficient information about 5-10 good institu
 - Focus Areas: {focus_str}{region_constraint}
 
 Search for universities and research institutes that are strong in these areas. When done, say "SEARCH COMPLETE"."""
+
+        if self.search_tool:
+            return self._run_tool_based_search(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                continue_message="Continue searching. If you have found enough institutions (5-10), provide a summary and say 'SEARCH COMPLETE'.",
+                max_turns=max_turns,
+                phase_name="Institution discovery",
+                error_context="Institution Discovery"
+            )
 
         return self._run_web_search(
             system_instruction=system_instruction,
@@ -455,15 +524,58 @@ Call save_institution for each institution, then finish_extraction when done."""
             score = args.get("relevance_score", "?")
             return (name, f"relevance: {score}", f"Saved: {name}")
 
-        institutions = self._run_extraction_loop(
-            system_instruction=system_instruction,
-            user_message=user_message,
-            save_func_schema=save_institution_schema,
-            save_func_name="save_institution",
-            on_save=on_save_institution,
-            progress_message="Extracting institutions...",
-            error_context="Institution Extraction"
-        )
+        # Route to appropriate extraction method based on processing provider
+        if self.processing_provider in ("openai_compatible",):
+            institutions = self._run_chat_completions_extraction(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                save_func_schema=save_institution_schema,
+                save_func_name="save_institution",
+                on_save=on_save_institution,
+                progress_message="Extracting institutions...",
+                error_context="Institution Extraction"
+            )
+        elif self.processing_provider == "openai":
+            # Use Responses API with the processing model
+            orig_model = self.model_name
+            orig_client = self.client
+            self.model_name = self.processing_model_name
+            self.client = self.processing_client
+
+            try:
+                institutions = self._run_extraction_loop(
+                    system_instruction=system_instruction,
+                    user_message=user_message,
+                    save_func_schema=save_institution_schema,
+                    save_func_name="save_institution",
+                    on_save=on_save_institution,
+                    progress_message="Extracting institutions...",
+                    error_context="Institution Extraction"
+                )
+            finally:
+                self.model_name = orig_model
+                self.client = orig_client
+        elif self.processing_provider == "google":
+            institutions = self._run_genai_extraction(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                save_func_schema=save_institution_schema,
+                save_func_name="save_institution",
+                on_save=on_save_institution,
+                progress_message="Extracting institutions...",
+                error_context="Institution Extraction"
+            )
+        else:
+            # Default: use native Responses API extraction with main model
+            institutions = self._run_extraction_loop(
+                system_instruction=system_instruction,
+                user_message=user_message,
+                save_func_schema=save_institution_schema,
+                save_func_name="save_institution",
+                on_save=on_save_institution,
+                progress_message="Extracting institutions...",
+                error_context="Institution Extraction"
+            )
 
         # Sort by relevance score
         institutions.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
