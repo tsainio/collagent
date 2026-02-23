@@ -806,6 +806,10 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
         const processingCustomGroup = document.getElementById('processingCustomGroup');
         const processingExtraGroup = document.getElementById('processingExtraGroup');
 
+        // Track server-side readiness so we never ask for keys that are already configured
+        let searchToolsData = [];   // [{name, ready}, ...]
+        let availableModelIds = new Set();  // models whose provider key is set server-side
+
         // Load available models on page load
         async function loadModels() {
             try {
@@ -813,6 +817,7 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                 const models = await response.json();
 
                 modelSelect.innerHTML = '';
+                availableModelIds = new Set(models.map(m => m.id));
 
                 // Filter: main model selector excludes processing_only models
                 const searchModels = models.filter(m => !m.processing_only);
@@ -865,10 +870,10 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
         async function loadSearchTools() {
             try {
                 const response = await fetch('/api/search-tools');
-                const tools = await response.json();
+                searchToolsData = await response.json();
 
                 // Keep the default option, add tools
-                tools.forEach(t => {
+                searchToolsData.forEach(t => {
                     const option = document.createElement('option');
                     option.value = t.name;
                     let label = t.name.charAt(0).toUpperCase() + t.name.slice(1);
@@ -885,24 +890,30 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
             }
         }
 
-        // Show/hide conditional fields
+        // Show/hide conditional fields based on server-side key availability
         searchToolSelect.addEventListener('change', () => {
-            searchToolApiKeyGroup.style.display = searchToolSelect.value ? '' : 'none';
+            if (searchToolSelect.value) {
+                const tool = searchToolsData.find(t => t.name === searchToolSelect.value);
+                // Only ask for API key if not already configured server-side
+                searchToolApiKeyGroup.style.display = (tool && tool.ready) ? 'none' : '';
+            } else {
+                searchToolApiKeyGroup.style.display = 'none';
+            }
         });
 
         processingModelSelect.addEventListener('change', () => {
             const val = processingModelSelect.value;
             const isCustom = val === '__custom__';
-            const isSet = val !== '';
+            const isKnown = val !== '' && !isCustom && availableModelIds.has(val);
 
+            // Custom: show model name input + base URL + API key
             processingCustomGroup.style.display = isCustom ? '' : 'none';
             processingExtraGroup.style.display = isCustom ? '' : 'none';
 
-            // For known non-default models, show just the API key override
-            if (isSet && !isCustom) {
-                processingExtraGroup.style.display = '';
-                // Hide base URL for known cloud models, show for openai_compatible
-                // We just show both and let the user decide — base URL is optional for cloud
+            // Known model from server: key is already configured, hide everything
+            // (provider key is set since the model appeared in /api/models)
+            if (isKnown) {
+                processingExtraGroup.style.display = 'none';
             }
         });
 
