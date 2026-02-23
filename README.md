@@ -147,7 +147,7 @@ python collagent.py --web --port 5050
   - Max search turns (depth of search)
   - Top candidates to highlight
   - Region and institution filters
-  - Model selection
+  - Advanced: search tool, processing model, custom local models
 - **Smart results display**:
   - Top N candidates highlighted with badges
   - Remaining candidates in collapsible "Other Candidates" section
@@ -170,6 +170,14 @@ python collagent.py --web --port 5050
 Both scripts use port 5050 by default and read API keys from `.env`.
 
 ```bash
+# .env file supports all API keys:
+GOOGLE_API_KEY=your-google-key
+OPENAI_API_KEY=your-openai-key
+BRAVE_SEARCH_API_KEY=your-brave-key    # optional
+TAVILY_API_KEY=your-tavily-key          # optional
+```
+
+```bash
 # Use custom port
 COLLAGENT_PORT=8080 ./start-without-docker.sh
 COLLAGENT_PORT=8080 ./start-docker.sh
@@ -181,8 +189,11 @@ COLLAGENT_PORT=8080 ./start-docker.sh
 # Start web interface
 docker run --rm -p 5050:5050 -e GOOGLE_API_KEY=your_key collagent --web --port 5050
 
-# Custom port
-docker run --rm -p 8080:8080 -e GOOGLE_API_KEY=your_key collagent --web --port 8080
+# With search tool key
+docker run --rm -p 5050:5050 \
+  -e GOOGLE_API_KEY=your_key \
+  -e BRAVE_SEARCH_API_KEY=your_brave_key \
+  collagent --web --port 5050
 ```
 
 ## Docker CLI Usage
@@ -267,38 +278,54 @@ models:
     display_name: "Llama 3.3 70B (Ollama)"
     provider: openai_compatible
     base_url: "http://localhost:11434/v1"
-    processing_only: true   # won't appear as a search model
+    processing_only: true   # won't appear as a search tool
 ```
+
+Pre-configured models appear as regular options in the web UI dropdowns. This is the recommended approach for multi-user deployments — admins configure models in `models.yaml` and API keys in `.env`, and users simply pick from the available options.
+
+The web UI also has a "Custom (local model)..." option for ad-hoc use without editing config files.
 
 Only models with configured API keys (or a `base_url` for local models) will be available.
 
-## Separating Search and Extraction
+## Search Tools and Processing Models
 
-CollAgent supports using different models for the two phases of a search:
+CollAgent's search has two phases:
 
-- **Search phase**: drives web queries, synthesizes research text (needs internet access or an external search tool)
-- **Extraction phase**: reads the research text and outputs structured data (no internet needed)
+- **Search phase**: drives web queries, synthesizes research text
+- **Extraction phase**: reads the research text and outputs structured data
 
-This is useful when you want a fast/cheap cloud model for search but a local model for extraction, or vice versa.
+By default, a single AI model (e.g. Gemini, GPT) handles both phases using its built-in web search. For more flexibility, you can use an external search tool and/or a separate processing model.
 
-### External Search Tools
+### Search Tool Options
 
-Instead of using the built-in provider search (Google grounding / OpenAI web search), you can plug in Tavily or Brave:
+| Tool | Type | Description |
+|------|------|-------------|
+| Gemini models | AI model with built-in search | Handles both search and processing |
+| GPT models | AI model with built-in search | Handles both search and processing |
+| Brave Search | Search-only API | Requires a separate AI model for processing |
+| Tavily | Search-only API | Requires a separate AI model for processing |
+
+In the **web UI**, the Advanced section has a single **Search Tool** dropdown listing all options. When you select a search-only tool (Brave/Tavily), a **Processing Model** dropdown appears for selecting the AI model.
+
+### External Search Tools (CLI)
 
 ```bash
-# Set API key via environment (recommended)
-export TAVILY_API_KEY="tvly-..."
+# Set API key via environment (recommended) or in .env
 export BRAVE_SEARCH_API_KEY="BSA..."
+export TAVILY_API_KEY="tvly-..."
 
-# Use Tavily for search with any model
+# Brave for search, Gemini for processing
+python collagent.py -p "ML researcher" -m gemini-3-flash-preview --search-tool brave
+
+# Tavily for search, GPT for processing
 python collagent.py -p "ML researcher" -m gpt-5.2 --search-tool tavily
 
 # Pass API key directly
-python collagent.py -p "ML researcher" --search-tool brave \
-  --search-tool-api-key "BSA..."
+python collagent.py -p "ML researcher" -m gemini-3-flash-preview \
+  --search-tool brave --search-tool-api-key "BSA..."
 ```
 
-### Processing Model Override
+### Processing Model Override (CLI)
 
 Use a different model for the extraction phase:
 
@@ -312,11 +339,11 @@ python collagent.py -p "ML researcher" -m gemini-3-flash-preview \
 python collagent.py -p "ML researcher" -m gpt-5.2 \
   --processing-model gemini-3-pro-preview
 
-# Fully local: Tavily for search + local model for everything
+# Brave for search + local model for processing
 python collagent.py -p "ML researcher" \
-  --processing-base-url http://localhost:11434/v1 \
+  --search-tool brave \
   --processing-model llama3.3 \
-  --search-tool tavily
+  --processing-base-url http://localhost:11434/v1
 ```
 
 ## Architecture
@@ -342,7 +369,7 @@ python collagent.py -p "ML researcher" \
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The search and processing models can be independently configured. Search requires internet access (or a search tool API key); extraction only needs text in, structured data out.
+Search requires internet access (via built-in search or an external search tool API key); extraction only needs text in, structured data out. All API keys can be configured in `.env` for seamless deployment.
 
 ## Output
 
