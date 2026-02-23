@@ -13,13 +13,18 @@ An AI-powered tool to find potential research collaborators using Google Gemini 
 - **Rich output**: Colored terminal output with shortlist table
 - **HTML logs**: Save the complete search process for later review
 - **Markdown reports**: Generate detailed reports of potential collaborators
+- **Flexible model routing**: Use different models for search and extraction (e.g. Google for search, local Ollama for extraction)
+- **External search tools**: Use Tavily or Brave Search instead of the built-in provider search
 
 ## Requirements
 
 - Python 3.10+
-- At least one API key:
+- At least one AI model API key:
   - Google API key for Gemini models ([Get one here](https://aistudio.google.com/apikey))
   - OpenAI API key for GPT models ([Get one here](https://platform.openai.com/api-keys))
+- Optionally, an external search tool API key:
+  - Tavily API key ([tavily.com](https://tavily.com))
+  - Brave Search API key ([brave.com/search/api](https://brave.com/search/api/))
 
 ## Installation
 
@@ -49,13 +54,6 @@ The easiest way to use CollAgent is through its web interface:
 
 Then open http://localhost:5050 in your browser. Press Ctrl+C to stop (local) or run `./stop-docker.sh` (Docker).
 
-### CLI Mode with Docker
-
-```bash
-docker run --rm -e GOOGLE_API_KEY=your_key_here collagent \
-  -p "machine learning for drug discovery"
-```
-
 ### CLI Mode from Source
 
 ```bash
@@ -70,6 +68,13 @@ python collagent.py -p "machine learning for drug discovery"
 
 # Use a specific model
 python collagent.py -p "machine learning" --model gpt-5.2
+```
+
+### CLI Mode with Docker
+
+```bash
+docker run --rm -e GOOGLE_API_KEY=your_key_here collagent \
+  -p "machine learning for drug discovery"
 ```
 
 ## Usage
@@ -225,40 +230,16 @@ All options marked with * are also available in the web interface.
 | `--region` | Region filter for broad search (e.g., "Europe", "USA") * |
 | `--max-turns` | Search depth - total budget across phases (default: 10) * |
 | `--model` | AI model to use (default: gemini-3-flash-preview) * |
-| `--list-models` | Show all available models and exit |
-
-## Output
-
-The tool produces:
-
-1. **Terminal output**: Live progress with colored formatting
-2. **Shortlist table**: Top candidates displayed as a summary table
-3. **Markdown report** (optional): Detailed information grouped by institution
-4. **HTML log** (optional): Complete search process with formatting preserved
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│                  CollAgent                          │
-├─────────────────────────────────────────────────────┤
-│  Phase 0: Institution Discovery (broad mode)        │
-│      └── Finds relevant universities/institutes     │
-│                                                     │
-│  Phase 1: Research (Google Search grounding)        │
-│      └── Searches for researchers at each           │
-│          institution                                │
-│                                                     │
-│  Phase 2: Extraction (Function Calling)             │
-│      └── Extracts structured collaborator data      │
-│                                                     │
-│  Output: Shortlist table + Markdown report          │
-└─────────────────────────────────────────────────────┘
-```
+| `--list-models` | Show all available models and search tools |
+| `--search-tool` | External search tool: `tavily` or `brave` |
+| `--search-tool-api-key` | API key for the external search tool |
+| `--processing-model` | Separate model for data extraction (default: same as main model) |
+| `--processing-base-url` | Base URL for processing model API (e.g., `http://localhost:11434/v1`) |
+| `--processing-api-key` | API key for processing model |
 
 ## Model Options
 
-List available models:
+List available models and search tools:
 ```bash
 python collagent.py --list-models
 ```
@@ -276,7 +257,101 @@ python collagent.py --list-models
 --model gpt-5.2-pro             # GPT-5.2 Pro (Highest Quality)
 ```
 
-Only models with configured API keys will be available. Set `GOOGLE_API_KEY` for Gemini models or `OPENAI_API_KEY` for GPT models.
+### Local / OpenAI-Compatible Models
+
+Any model served via an OpenAI-compatible API (Ollama, vLLM, LM Studio, llama.cpp server) can be used for extraction. Add it to `collagent/models.yaml`:
+
+```yaml
+models:
+  - id: llama3.3
+    display_name: "Llama 3.3 70B (Ollama)"
+    provider: openai_compatible
+    base_url: "http://localhost:11434/v1"
+    processing_only: true   # won't appear as a search model
+```
+
+Only models with configured API keys (or a `base_url` for local models) will be available.
+
+## Separating Search and Extraction
+
+CollAgent supports using different models for the two phases of a search:
+
+- **Search phase**: drives web queries, synthesizes research text (needs internet access or an external search tool)
+- **Extraction phase**: reads the research text and outputs structured data (no internet needed)
+
+This is useful when you want a fast/cheap cloud model for search but a local model for extraction, or vice versa.
+
+### External Search Tools
+
+Instead of using the built-in provider search (Google grounding / OpenAI web search), you can plug in Tavily or Brave:
+
+```bash
+# Set API key via environment (recommended)
+export TAVILY_API_KEY="tvly-..."
+export BRAVE_SEARCH_API_KEY="BSA..."
+
+# Use Tavily for search with any model
+python collagent.py -p "ML researcher" -m gpt-5.2 --search-tool tavily
+
+# Pass API key directly
+python collagent.py -p "ML researcher" --search-tool brave \
+  --search-tool-api-key "BSA..."
+```
+
+### Processing Model Override
+
+Use a different model for the extraction phase:
+
+```bash
+# Google search + local Llama for extraction
+python collagent.py -p "ML researcher" -m gemini-3-flash-preview \
+  --processing-model llama3.3 \
+  --processing-base-url http://localhost:11434/v1
+
+# OpenAI search + different Google model for extraction
+python collagent.py -p "ML researcher" -m gpt-5.2 \
+  --processing-model gemini-3-pro-preview
+
+# Fully local: Tavily for search + local model for everything
+python collagent.py -p "ML researcher" \
+  --processing-base-url http://localhost:11434/v1 \
+  --processing-model llama3.3 \
+  --search-tool tavily
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        CollAgent                            │
+├─────────────────────────────────────────────────────────────┤
+│  Phase 0: Institution Discovery (broad mode)                │
+│      └── Search LLM + search tool finds institutions        │
+│                                                             │
+│  Phase 1: Research                                          │
+│      └── Search LLM + search tool gathers researcher info   │
+│          • Built-in: Google grounding / OpenAI web search   │
+│          • External: Tavily, Brave (via --search-tool)      │
+│                                                             │
+│  Phase 2: Extraction                                        │
+│      └── Processing LLM extracts structured data           │
+│          • Default: same model as search                    │
+│          • Override: --processing-model (any provider)      │
+│                                                             │
+│  Output: Shortlist table + Markdown report                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+The search and processing models can be independently configured. Search requires internet access (or a search tool API key); extraction only needs text in, structured data out.
+
+## Output
+
+The tool produces:
+
+1. **Terminal output**: Live progress with colored formatting
+2. **Shortlist table**: Top candidates displayed as a summary table
+3. **Markdown report** (optional): Detailed information grouped by institution
+4. **HTML log** (optional): Complete search process with formatting preserved
 
 ## Limitations
 
