@@ -198,9 +198,11 @@ class CollAgentBase(ABC):
         """
         Multi-turn search using external search tool + any LLM via Chat Completions.
 
-        Gives the LLM a web_search function tool. When the LLM calls web_search,
-        routes to self.search_tool.search(). Feeds results back and continues
-        until SEARCH COMPLETE or max turns.
+        Unlike built-in web search where each API call both searches and produces
+        text, tool-based search separates these: the LLM requests searches via
+        function calls, we execute them and feed results back, then the LLM
+        synthesizes. A single "logical turn" may require multiple API round-trips
+        (search calls + synthesis), so we track text turns and API calls separately.
 
         Returns accumulated research text.
         """
@@ -238,8 +240,13 @@ class CollAgentBase(ABC):
         accumulated_text = []
         last_response_length = 0
 
-        for turn in range(1, max_turns + 1):
-            self.console.print(f"[dim]{phase_name} turn {turn}/{max_turns}...[/dim]")
+        text_turns = 0          # Turns where the LLM produced text (what max_turns limits)
+        search_rounds = 0       # Function-call round-trips (search + feed results)
+        max_search_rounds = max_turns * 3  # Generous ceiling to prevent runaway loops
+        did_search = False      # Whether any searches were performed
+
+        while text_turns < max_turns and search_rounds < max_search_rounds:
+            self.console.print(f"[dim]{phase_name} turn {text_turns + 1}/{max_turns}...[/dim]")
 
             try:
                 response = client.chat.completions.create(
@@ -259,8 +266,17 @@ class CollAgentBase(ABC):
             # Append assistant message to history
             messages.append(message)
 
+            # Capture any text the LLM produced alongside tool calls
+            if message.content:
+                accumulated_text.append(message.content)
+                preview = message.content[:400] + "..." if len(message.content) > 400 else message.content
+                self.console.print(f"[dim]{preview}[/dim]")
+
             # Handle tool calls
             if message.tool_calls:
+                did_search = True
+                search_rounds += 1
+
                 for tc in message.tool_calls:
                     if tc.function.name == "web_search":
                         try:
@@ -283,15 +299,14 @@ class CollAgentBase(ABC):
                             "tool_call_id": tc.id,
                             "content": json.dumps({"error": f"Unknown function: {tc.function.name}"}),
                         })
-                # After processing tool calls, continue the loop for the LLM to respond
+                # Let the LLM process the search results
                 continue
 
-            # No tool calls — check for text content
+            # No tool calls — this is a pure text response (a "text turn")
             response_text = message.content or ""
             if response_text:
-                accumulated_text.append(response_text)
-                preview = response_text[:400] + "..." if len(response_text) > 400 else response_text
-                self.console.print(f"[dim]{preview}[/dim]")
+                # Text was already captured above, just check stop conditions
+                text_turns += 1
 
                 if "SEARCH COMPLETE" in response_text.upper():
                     self.console.print("[dim]Search complete signal received.[/dim]")
@@ -313,6 +328,29 @@ class CollAgentBase(ABC):
                 # Model decided to stop naturally
                 if accumulated_text:
                     break
+
+        # If searches were performed but no text synthesis was produced,
+        # make a final call without tools to force the LLM to summarize
+        if not accumulated_text and did_search:
+            self.console.print(f"[dim]Synthesizing search results...[/dim]")
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Based on all the search results you have gathered, provide a "
+                    "comprehensive summary of your findings. SEARCH COMPLETE"
+                ),
+            })
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.7,
+                )
+                response_text = response.choices[0].message.content or ""
+                if response_text:
+                    accumulated_text.append(response_text)
+            except Exception:
+                pass
 
         return "\n\n".join(accumulated_text)
 

@@ -587,12 +587,15 @@ Call save_institution for each institution, then finish_extraction when done."""
         """
         Broad search: Discover institutions first, then search each for collaborators.
         """
+        model_info = f"Search Model: {self.model_name}\nProcessing Model: {self.processing_model_name}" \
+            if self.processing_model_name and self.processing_model_name != self.model_name \
+            else f"Model: {self.model_name}"
         self.console.print(Panel(
             f"[bold]Starting broad collaborator search[/bold]\n\n"
             f"Mode: Institution Discovery + Multi-Institution Search\n"
             f"Max Institutions: {max_institutions}\n"
             f"Region: {region or 'Worldwide'}\n"
-            f"Model: {self.model_name}",
+            f"{model_info}",
             title="CollAgent - Broad Search",
             border_style="blue"
         ))
@@ -665,10 +668,13 @@ Call save_institution for each institution, then finish_extraction when done."""
         Phase 1: Web search for research
         Phase 2: Function calling for structured extraction
         """
+        model_info = f"Search Model: {self.model_name}\nProcessing Model: {self.processing_model_name}" \
+            if self.processing_model_name and self.processing_model_name != self.model_name \
+            else f"Model: {self.model_name}"
         self.console.print(Panel(
             f"[bold]Starting collaborator search[/bold]\n\n"
             f"Target: {institution or 'Open search'}\n"
-            f"Model: {self.model_name}\n"
+            f"{model_info}\n"
             f"Method: Two-phase (Search → Extract)",
             title="CollAgent",
             border_style="green"

@@ -78,6 +78,12 @@ class CollAgentGoogle(CollAgentBase):
         """
         Multi-turn search using external search tool + Google genai function calling.
         Used when the Google agent has a search_tool but no OpenAI search client.
+
+        Unlike grounded search where each API call both searches and produces text,
+        tool-based search separates these: the LLM requests searches via function
+        calls, we execute them and feed results back, then the LLM synthesizes.
+        A single "logical turn" may require multiple API round-trips (search calls
+        + synthesis), so we track text turns and API calls separately.
         """
         import json
 
@@ -93,7 +99,7 @@ class CollAgentGoogle(CollAgentBase):
             )
         )
 
-        config = types.GenerateContentConfig(
+        search_config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             tools=[types.Tool(function_declarations=[web_search_func])],
             temperature=0.7,
@@ -103,32 +109,46 @@ class CollAgentGoogle(CollAgentBase):
         accumulated_text = []
         last_response_length = 0
 
-        turn = 0
-        while turn < max_turns:
-            turn += 1
-            self.console.print(f"[dim]{phase_name} turn {turn}/{max_turns}...[/dim]")
+        text_turns = 0          # Turns where the LLM produced text (what max_turns limits)
+        search_rounds = 0       # Function-call round-trips (search + feed results)
+        max_search_rounds = max_turns * 3  # Generous ceiling to prevent runaway loops
+        did_search = False      # Whether any searches were performed
+
+        while text_turns < max_turns and search_rounds < max_search_rounds:
+            self.console.print(f"[dim]{phase_name} turn {text_turns + 1}/{max_turns}...[/dim]")
 
             try:
                 response = self.client.models.generate_content(
                     model=self.model_name,
                     contents=contents,
-                    config=config,
+                    config=search_config,
                 )
             except Exception as e:
                 if self._handle_api_error(e, error_context):
                     return ""
                 break
 
-            # Check for function calls
-            function_calls = self.parse_function_calls(response)
+            # Check for function calls and text — a response can contain both
+            func_calls = self.parse_function_calls(response)
+            response_text = self.get_response_text(response)
 
-            if function_calls:
-                # Append assistant response
+            # Capture any text the LLM produced alongside function calls
+            if response_text:
+                accumulated_text.append(response_text)
+                preview = response_text[:400] + "..." if len(response_text) > 400 else response_text
+                self.console.print(f"[dim]{preview}[/dim]")
+
+            if func_calls:
+                did_search = True
+                search_rounds += 1
+
+                # Append assistant response to conversation
                 if response.candidates and response.candidates[0].content:
                     contents.append(response.candidates[0].content)
 
+                # Execute each search and collect results
                 function_responses = []
-                for fc in function_calls:
+                for fc in func_calls:
                     if fc.name == "web_search":
                         args = dict(fc.args) if fc.args else {}
                         query = args.get("query", "")
@@ -149,14 +169,11 @@ class CollAgentGoogle(CollAgentBase):
                     ))
 
                 contents.append(types.Content(role="user", parts=function_responses))
-                continue
+                continue  # Let the LLM process the results
 
-            # No function calls — check for text content
-            response_text = self.get_response_text(response)
+            # No function calls — this is a pure text response (a "text turn")
             if response_text:
-                accumulated_text.append(response_text)
-                preview = response_text[:400] + "..." if len(response_text) > 400 else response_text
-                self.console.print(f"[dim]{preview}[/dim]")
+                text_turns += 1
 
                 if "SEARCH COMPLETE" in response_text.upper():
                     self.console.print("[dim]Search complete signal received.[/dim]")
@@ -178,6 +195,33 @@ class CollAgentGoogle(CollAgentBase):
             else:
                 if accumulated_text:
                     break
+
+        # If searches were performed but no text synthesis was produced,
+        # make a final call without tools to force the LLM to summarize
+        if not accumulated_text and did_search:
+            self.console.print(f"[dim]Synthesizing search results...[/dim]")
+            synthesis_config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.7,
+            )
+            contents.append(types.Content(
+                role="user",
+                parts=[types.Part(text=(
+                    "Based on all the search results you have gathered, provide a "
+                    "comprehensive summary of your findings. SEARCH COMPLETE"
+                ))]
+            ))
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=synthesis_config,
+                )
+                response_text = self.get_response_text(response)
+                if response_text:
+                    accumulated_text.append(response_text)
+            except Exception:
+                pass
 
         return "\n\n".join(accumulated_text)
 
@@ -762,12 +806,15 @@ Call save_institution for each institution, then finish_extraction when done."""
         """
         Broad search: Discover institutions first, then search each for collaborators.
         """
+        model_info = f"Search Model: {self.model_name}\nProcessing Model: {self.processing_model_name}" \
+            if self.processing_model_name and self.processing_model_name != self.model_name \
+            else f"Model: {self.model_name}"
         self.console.print(Panel(
             f"[bold]Starting broad collaborator search[/bold]\n\n"
             f"Mode: Institution Discovery + Multi-Institution Search\n"
             f"Max Institutions: {max_institutions}\n"
             f"Region: {region or 'Worldwide'}\n"
-            f"Model: {self.model_name}",
+            f"{model_info}",
             title="CollAgent - Broad Search",
             border_style="blue"
         ))
@@ -842,10 +889,13 @@ Call save_institution for each institution, then finish_extraction when done."""
         Phase 1: Google Search grounding for research
         Phase 2: Function calling for structured extraction
         """
+        model_info = f"Search Model: {self.model_name}\nProcessing Model: {self.processing_model_name}" \
+            if self.processing_model_name and self.processing_model_name != self.model_name \
+            else f"Model: {self.model_name}"
         self.console.print(Panel(
             f"[bold]Starting collaborator search[/bold]\n\n"
             f"Target: {institution or 'Open search'}\n"
-            f"Model: {self.model_name}\n"
+            f"{model_info}\n"
             f"Method: Two-phase (Search → Extract)",
             title="CollAgent",
             border_style="green"
