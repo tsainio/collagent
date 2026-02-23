@@ -258,7 +258,7 @@ python collagent.py --list-models
 ### Google Gemini Models
 ```bash
 --model gemini-3-flash-preview  # Default, fast
---model gemini-3-pro-preview    # Higher quality, slower
+--model gemini-3.1-pro-preview    # Higher quality, slower
 ```
 
 ### OpenAI GPT Models
@@ -337,7 +337,7 @@ python collagent.py -p "ML researcher" -m gemini-3-flash-preview \
 
 # OpenAI search + different Google model for extraction
 python collagent.py -p "ML researcher" -m gpt-5.2 \
-  --processing-model gemini-3-pro-preview
+  --processing-model gemini-3.1-pro-preview
 
 # Brave for search + local model for processing
 python collagent.py -p "ML researcher" \
