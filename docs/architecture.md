@@ -9,7 +9,7 @@ CollAgent's search has two core phases, plus an institution discovery step in br
 
 - **Discovery phase** (broad mode only): identifies relevant institutions to search
 - **Research phase**: drives web queries, synthesizes research text
-- **Extraction phase**: reads the research text and outputs structured data
+- **Processing phase**: reads the research text and outputs structured data
 
 By default, a single AI model (e.g. Gemini, GPT) handles both phases using its built-in web search. For more flexibility, you can use an external search tool and/or a separate processing model.
 
@@ -39,7 +39,7 @@ In the web UI, the **Search Tool** dropdown lists all options. When you select a
 │          • Built-in: Google grounding / OpenAI web search   │
 │          • External: Tavily, Brave (via --search-tool)      │
 │                                                             │
-│  Phase 2: Extraction                                        │
+│  Phase 2: Processing                                        │
 │      └── Processing LLM extracts structured data           │
 │          • Default: same model as search                    │
 │          • Override: --processing-model (any provider)      │
@@ -48,7 +48,7 @@ In the web UI, the **Search Tool** dropdown lists all options. When you select a
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Search requires internet access (via built-in search or an external search tool API key); extraction only needs text in, structured data out.
+Search requires internet access (via built-in search or an external search tool API key); processing only needs text in, structured data out.
 
 ## CLI Examples
 
@@ -56,12 +56,12 @@ Search requires internet access (via built-in search or an external search tool 
 # Brave for search, Gemini for processing
 python collagent.py -p "ML researcher" -m gemini-3-flash-preview --search-tool brave
 
-# Google search + local Ollama for extraction
+# Google search + local Ollama for processing
 python collagent.py -p "ML researcher" -m gemini-3-flash-preview \
   --processing-model llama3.3 \
   --processing-base-url http://localhost:11434/v1
 
-# Brave for search + local model for extraction
+# Brave for search + local model for processing
 python collagent.py -p "ML researcher" \
   --search-tool brave \
   --processing-model llama3.3 \

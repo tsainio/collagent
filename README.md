@@ -42,8 +42,8 @@ Then open http://localhost:5050 in your browser.
 Both scripts use port 5050 by default and read API keys from `.env`:
 
 ```bash
-GOOGLE_API_KEY=your-google-key
-OPENAI_API_KEY=your-openai-key
+GOOGLE_API_KEY=your-google-key          # optional if using local models
+OPENAI_API_KEY=your-openai-key          # optional if using local models
 BRAVE_SEARCH_API_KEY=your-brave-key    # optional
 TAVILY_API_KEY=your-tavily-key          # optional
 ```
@@ -102,22 +102,15 @@ python collagent.py --list-models
 
 ### Local / OpenAI-Compatible Models
 
-Any model served via an OpenAI-compatible API (Ollama, vLLM, LM Studio, llama.cpp server) can be used. Add it to `collagent/models.yaml`:
+Any model served via an OpenAI-compatible API (Ollama, vLLM, LM Studio, llama.cpp server) can be used. Local models cannot do web search on their own — pair them with Brave or Tavily for search. Add models to `collagent/models.yaml`:
 
 ```yaml
 models:
-  # Search + processing model (pair with Brave/Tavily for web search)
   - id: qwen3:14b
     display_name: "Qwen3 14B (Ollama)"
     provider: openai_compatible
     base_url: "http://localhost:11434/v1"
-
-  # Extraction-only model (appears only in Processing Model dropdown)
-  - id: llama3.3
-    display_name: "Llama 3.3 70B (Ollama)"
-    provider: openai_compatible
-    base_url: "http://localhost:11434/v1"
-    processing_only: true
+    # processing_only: true    # uncomment to hide from the Search Tool dropdown
 ```
 
 When running in Docker, use `http://host.docker.internal:11434/v1` instead of `localhost` to reach Ollama on the host machine.
@@ -126,7 +119,7 @@ Pre-configured models appear as regular options in the web UI dropdowns. The web
 
 ## Search Tools and Processing Models
 
-By default, a single AI model handles both web search and data extraction. You can also mix providers — e.g. Brave Search for web queries, a local Ollama model for extraction, or any combination. See [docs/architecture.md](docs/architecture.md) for details, pipeline diagram, and CLI examples.
+By default, a single AI model handles both web search and processing. You can also mix providers — e.g. Brave Search for web queries, a local Ollama model for processing, or any combination. See [docs/architecture.md](docs/architecture.md) for details, pipeline diagram, and CLI examples.
 
 ## Command-line Options
 
@@ -150,7 +143,7 @@ All options marked with * are also available in the web interface.
 | `--list-models` | Show all available models and search tools |
 | `--search-tool` | External search tool: `tavily` or `brave` |
 | `--search-tool-api-key` | API key for the external search tool |
-| `--processing-model` | Separate model for data extraction (default: same as main model) |
+| `--processing-model` | Separate model for processing (default: same as main model) |
 | `--processing-base-url` | Base URL for processing model API (e.g., `http://localhost:11434/v1`) |
 | `--processing-api-key` | API key for processing model |
 

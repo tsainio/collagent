@@ -872,7 +872,7 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                 const option = document.createElement('option');
                 option.value = m.id;
                 let label = `${m.display_name} [${m.provider}]`;
-                if (m.processing_only) label += ' (extraction only)';
+                if (m.processing_only) label += ' (processing only)';
                 option.textContent = label;
                 // Pre-select the default model
                 if (m.default) option.selected = true;

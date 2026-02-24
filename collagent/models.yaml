@@ -34,16 +34,10 @@ models:
     display_name: "GPT-5.2 Pro (Highest Quality)"
     provider: openai
 
-  # Example local/custom models (uncomment and configure):
-  # Search + processing (pair with Brave/Tavily for web search):
+  # Example local model (uncomment and configure):
+  # Local models need Brave/Tavily for web search.
   # - id: qwen3:14b
   #   display_name: "Qwen3 14B (Ollama)"
   #   provider: openai_compatible
   #   base_url: "http://localhost:11434/v1"
-  #
-  # Extraction-only (appears only in Processing Model dropdown):
-  # - id: llama3.3
-  #   display_name: "Llama 3.3 70B (Ollama)"
-  #   provider: openai_compatible
-  #   base_url: "http://localhost:11434/v1"
-  #   processing_only: true
+  #   # processing_only: true    # uncomment to hide from the Search Tool dropdown
