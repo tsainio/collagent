@@ -6,14 +6,23 @@ providers:
     env_key: GOOGLE_API_KEY
   openai:
     env_key: OPENAI_API_KEY
+  openai_compatible:
+    # For any OpenAI-compatible API (Ollama, vLLM, llama.cpp, LM Studio, etc.)
+    # base_url is set per-model; no global env_key required
+
+search_tools:
+  tavily:
+    env_key: TAVILY_API_KEY
+  brave:
+    env_key: BRAVE_SEARCH_API_KEY
 
 models:
   - id: gemini-3-flash-preview
     display_name: "Gemini 3 Flash (Default)"
     provider: google
     default: true
-  - id: gemini-3-pro-preview
-    display_name: "Gemini 3 Pro (Higher Quality)"
+  - id: gemini-3.1-pro-preview
+    display_name: "Gemini 3.1 Pro (Higher Quality)"
     provider: google
   - id: gpt-5.2
     display_name: "GPT-5.2 Thinking"
@@ -24,3 +33,17 @@ models:
   - id: gpt-5.2-pro
     display_name: "GPT-5.2 Pro (Highest Quality)"
     provider: openai
+
+  # Example local/custom models (uncomment and configure):
+  # Full search + processing (appears in Search Tool dropdown):
+  # - id: qwen3:14b
+  #   display_name: "Qwen3 14B (Ollama)"
+  #   provider: openai_compatible
+  #   base_url: "http://localhost:11434/v1"
+  #
+  # Extraction-only (appears only in Processing Model dropdown):
+  # - id: llama3.3
+  #   display_name: "Llama 3.3 70B (Ollama)"
+  #   provider: openai_compatible
+  #   base_url: "http://localhost:11434/v1"
+  #   processing_only: true

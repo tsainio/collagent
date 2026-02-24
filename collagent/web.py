@@ -17,7 +17,7 @@ from rich.panel import Panel
 from .template import WEB_TEMPLATE
 from .streaming import console, search_results, search_results_lock, StreamingConsole
 from .core import HTML_REPORT_TEMPLATE
-from .config import get_available_models, get_default_model
+from .config import get_available_models, get_default_model, get_available_search_tools, get_all_search_tools
 from .factory import create_agent
 
 # Flask imports (optional for web mode)
@@ -61,9 +61,16 @@ def create_web_app():
                 "id": m["id"],
                 "display_name": m.get("display_name", m["id"]),
                 "provider": m.get("provider", "unknown"),
-                "default": m["id"] == default_id
+                "default": m["id"] == default_id,
+                "processing_only": m.get("processing_only", False),
             })
         return jsonify(result)
+
+    @app.route('/api/search-tools')
+    def api_search_tools():
+        """Return all configured search tools with availability status."""
+        tools = get_all_search_tools()
+        return jsonify(tools)
 
     @app.route('/search')
     def search():
@@ -76,6 +83,14 @@ def create_web_app():
         max_turns = int(request.args.get('max_turns', 10))
         top_candidates = int(request.args.get('top_candidates', 5))
         model = request.args.get('model', 'gemini-3-flash-preview')
+        base_url = request.args.get('base_url', '').strip() or None
+
+        # New parameters for search tool and processing model
+        search_tool = request.args.get('search_tool', '').strip() or None
+        search_tool_api_key = request.args.get('search_tool_api_key', '').strip() or None
+        processing_model = request.args.get('processing_model', '').strip() or None
+        processing_base_url = request.args.get('processing_base_url', '').strip() or None
+        processing_api_key = request.args.get('processing_api_key', '').strip() or None
 
         # Parse focus areas
         focus_areas = [a.strip() for a in focus.split(",") if a.strip()] if focus else None
@@ -92,7 +107,16 @@ def create_web_app():
 
             # Create agent with streaming console using factory
             try:
-                agent = create_agent(model, output_console=streaming_console)
+                agent = create_agent(
+                    model,
+                    output_console=streaming_console,
+                    base_url=base_url,
+                    processing_model_id=processing_model,
+                    processing_base_url=processing_base_url,
+                    processing_api_key=processing_api_key,
+                    search_tool_name=search_tool,
+                    search_tool_api_key=search_tool_api_key,
+                )
             except ValueError as e:
                 output_queue.put({'type': 'error', 'text': str(e)})
                 yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"

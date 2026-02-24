@@ -13,13 +13,16 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from .streaming import console
-from .config import get_models, get_model_ids, get_default_model, get_available_models, get_model_by_id
+from .config import (get_models, get_model_ids, get_default_model,
+                     get_available_models, get_model_by_id,
+                     get_available_search_tools)
 from .factory import create_agent
+from .search_tools import SEARCH_TOOLS
 from .web import run_web_server
 
 
 def list_models():
-    """Display available models in a table."""
+    """Display available models and search tools in tables."""
     models = get_models()
     available = get_available_models()
     available_ids = {m["id"] for m in available}
@@ -28,6 +31,7 @@ def list_models():
     table.add_column("Model ID", style="bold")
     table.add_column("Display Name")
     table.add_column("Provider")
+    table.add_column("Flags", justify="center")
     table.add_column("Status", justify="center")
 
     for m in models:
@@ -36,16 +40,43 @@ def list_models():
         provider = m.get("provider", "unknown")
         default = " (default)" if m.get("default") else ""
 
+        flags = []
+        if m.get("processing_only"):
+            flags.append("proc-only")
+        flags_str = ", ".join(flags) if flags else "-"
+
         if model_id in available_ids:
             status = "[green]Ready[/green]"
         else:
             status = "[dim]No API key[/dim]"
 
-        table.add_row(model_id, display + default, provider, status)
+        table.add_row(model_id, display + default, provider, flags_str, status)
 
     console.print(table)
     console.print()
+
+    # Show available search tools
+    available_tools = get_available_search_tools()
+    all_tools = list(SEARCH_TOOLS.keys())
+
+    if all_tools:
+        tool_table = Table(title="Search Tools", show_header=True, header_style="bold cyan")
+        tool_table.add_column("Tool", style="bold")
+        tool_table.add_column("Status", justify="center")
+
+        available_tool_names = {t["name"] for t in available_tools}
+        for name in all_tools:
+            if name in available_tool_names:
+                status = "[green]Ready[/green]"
+            else:
+                status = "[dim]No API key[/dim]"
+            tool_table.add_row(name, status)
+
+        console.print(tool_table)
+        console.print()
+
     console.print("[dim]Set GOOGLE_API_KEY or OPENAI_API_KEY to enable models.[/dim]")
+    console.print("[dim]Set TAVILY_API_KEY or BRAVE_SEARCH_API_KEY to enable search tools.[/dim]")
 
 
 def main():
@@ -76,7 +107,14 @@ Examples:
   # Use a specific model
   %(prog)s --profile "ML researcher" --model gpt-5.2
 
-  # List available models
+  # Google search + local processing model
+  %(prog)s --profile "ML researcher" -m gemini-3-flash-preview \\
+    --processing-model llama3.3 --processing-base-url http://localhost:11434/v1
+
+  # External search tool + any model
+  %(prog)s --profile "ML researcher" -m gpt-5.2 --search-tool tavily
+
+  # List available models and search tools
   %(prog)s --list-models
 
   # Web interface mode
@@ -100,11 +138,25 @@ Examples:
     parser.add_argument("--model", "-m", type=str, default=default_model_id, choices=model_ids,
                        help=f"Model to use (default: {default_model_id})")
     parser.add_argument("--list-models", action="store_true",
-                       help="List all available models and exit")
+                       help="List all available models and search tools")
     parser.add_argument("--web", "-w", action="store_true",
                        help="Start web interface instead of CLI mode")
     parser.add_argument("--port", type=int, default=5050,
                        help="Port for web server (default: 5050)")
+
+    # Search tool options
+    parser.add_argument("--search-tool", type=str, choices=list(SEARCH_TOOLS.keys()),
+                       help="External search tool: tavily, brave (default: provider's built-in)")
+    parser.add_argument("--search-tool-api-key", type=str,
+                       help="API key for external search tool")
+
+    # Processing model options
+    parser.add_argument("--processing-model", type=str,
+                       help="Model for extraction/processing (default: same as main model)")
+    parser.add_argument("--processing-base-url", type=str,
+                       help="Base URL for processing model API (e.g., http://localhost:11434/v1)")
+    parser.add_argument("--processing-api-key", type=str,
+                       help="API key for processing model")
 
     args = parser.parse_args()
 
@@ -126,7 +178,14 @@ Examples:
         sys.exit(1)
 
     try:
-        agent = create_agent(args.model)
+        agent = create_agent(
+            model_id=args.model,
+            processing_model_id=args.processing_model,
+            processing_base_url=args.processing_base_url,
+            processing_api_key=args.processing_api_key,
+            search_tool_name=args.search_tool,
+            search_tool_api_key=args.search_tool_api_key,
+        )
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
         provider = model_config.get("provider", "unknown")

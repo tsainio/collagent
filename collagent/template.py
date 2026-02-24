@@ -693,14 +693,54 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                         <input type="number" id="top_candidates" name="top_candidates" value="5" min="1" max="20">
                         <p class="help-text">Show this many in main view (1-20)</p>
                     </div>
+                </div>
+
+                <input type="hidden" id="model" name="model" value="">
+
+                <div class="form-row">
                     <div class="form-group">
-                        <label for="model">Model</label>
-                        <select id="model" name="model">
-                            <option value="">Loading models...</option>
+                        <label for="search_tool">Search Tool</label>
+                        <select id="search_tool" name="search_tool">
+                            <option value="">Loading...</option>
                         </select>
-                        <p class="help-text" id="modelHelp">Select an AI model for the search</p>
+                        <p class="help-text" id="searchToolHelp">AI model or external search API</p>
+                    </div>
+                    <div class="form-group" id="searchToolApiKeyGroup" style="display: none;">
+                        <label for="search_tool_api_key">Search API Key</label>
+                        <input type="text" id="search_tool_api_key" name="search_tool_api_key" placeholder="Leave empty to use env variable">
+                        <p class="help-text">Overrides TAVILY_API_KEY / BRAVE_SEARCH_API_KEY</p>
                     </div>
                 </div>
+
+                <div class="form-row" id="processingModelRow" style="display: none;">
+                    <div class="form-group">
+                        <label for="processing_model">Processing Model</label>
+                        <select id="processing_model" name="processing_model">
+                            <option value="">Select a model...</option>
+                        </select>
+                        <p class="help-text">LLM for analyzing search results and extracting data</p>
+                    </div>
+                    <div class="form-group" id="processingCustomGroup" style="display: none;">
+                        <label for="processing_model_custom">Custom Model Name</label>
+                        <input type="text" id="processing_model_custom" name="processing_model_custom" placeholder="e.g., llama3.3">
+                        <p class="help-text">Model name/ID for the local API server</p>
+                    </div>
+                </div>
+
+                <div class="form-row" id="processingExtraGroup" style="display: none;">
+                    <div class="form-group">
+                        <label for="processing_base_url">Processing Base URL</label>
+                        <input type="text" id="processing_base_url" name="processing_base_url" placeholder="e.g., http://host.docker.internal:11434/v1">
+                        <p class="help-text">Required for local/custom models</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="processing_api_key">Processing API Key</label>
+                        <input type="text" id="processing_api_key" name="processing_api_key" placeholder="Leave empty to use env variable">
+                        <p class="help-text">Overrides the default API key for this model</p>
+                    </div>
+                </div>
+
+                <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 1.2rem 0;">
 
                 <button type="submit" class="btn btn-primary" id="searchBtn">
                     <span>Start Search</span>
@@ -748,51 +788,161 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
         const statusIndicator = document.getElementById('statusIndicator');
         const statusText = document.getElementById('statusText');
         const resultsActions = document.getElementById('resultsActions');
-        const modelSelect = document.getElementById('model');
-        const modelHelp = document.getElementById('modelHelp');
+        const modelHidden = document.getElementById('model');
 
         let currentSearchId = null;
         let eventSource = null;
         let isSearching = false;
 
-        // Load available models on page load
-        async function loadModels() {
+        const searchToolSelect = document.getElementById('search_tool');
+        const searchToolHelp = document.getElementById('searchToolHelp');
+        const searchToolApiKeyGroup = document.getElementById('searchToolApiKeyGroup');
+        const processingModelRow = document.getElementById('processingModelRow');
+        const processingModelSelect = document.getElementById('processing_model');
+        const processingCustomGroup = document.getElementById('processingCustomGroup');
+        const processingExtraGroup = document.getElementById('processingExtraGroup');
+
+        // Track loaded data
+        let searchToolsData = [];   // [{name, ready}, ...]
+        let modelsData = [];        // [{id, display_name, provider, default, processing_only}, ...]
+        let availableModelIds = new Set();
+
+        // Load search tools and models, populate combined dropdown
+        async function loadSearchTools() {
             try {
-                const response = await fetch('/api/models');
-                const models = await response.json();
+                const [modelsRes, toolsRes] = await Promise.all([
+                    fetch('/api/models'),
+                    fetch('/api/search-tools'),
+                ]);
+                modelsData = await modelsRes.json();
+                searchToolsData = await toolsRes.json();
 
-                modelSelect.innerHTML = '';
+                availableModelIds = new Set(modelsData.map(m => m.id));
 
-                if (models.length === 0) {
-                    modelSelect.innerHTML = '<option value="">No models available</option>';
-                    modelHelp.textContent = 'Set GOOGLE_API_KEY or OPENAI_API_KEY to enable models';
+                // Build combined dropdown: LLM models first, then search-only tools
+                searchToolSelect.innerHTML = '';
+                const searchModels = modelsData.filter(m => !m.processing_only);
+
+                if (searchModels.length === 0 && searchToolsData.length === 0) {
+                    searchToolSelect.innerHTML = '<option value="">No tools available</option>';
+                    searchToolHelp.textContent = 'Set API keys to enable search tools';
                     searchBtn.disabled = true;
                     return;
                 }
 
-                models.forEach(m => {
+                // Add LLM models (handle both search and processing)
+                searchModels.forEach(m => {
                     const option = document.createElement('option');
-                    option.value = m.id;
+                    option.value = 'model:' + m.id;
                     option.textContent = `${m.display_name} [${m.provider}]`;
-                    if (m.default) {
-                        option.selected = true;
-                    }
-                    modelSelect.appendChild(option);
+                    if (m.default) option.selected = true;
+                    searchToolSelect.appendChild(option);
                 });
 
-                // Update help text with provider info
-                const providers = [...new Set(models.map(m => m.provider))];
-                modelHelp.textContent = `Available providers: ${providers.join(', ')}`;
+                // Add search-only tools
+                if (searchToolsData.length > 0) {
+                    const sep = document.createElement('option');
+                    sep.disabled = true;
+                    sep.textContent = '── Search-only (needs processing model) ──';
+                    searchToolSelect.appendChild(sep);
+
+                    searchToolsData.forEach(t => {
+                        const option = document.createElement('option');
+                        option.value = 'tool:' + t.name;
+                        let label = t.name.charAt(0).toUpperCase() + t.name.slice(1);
+                        if (!t.ready) label += ' (needs API key)';
+                        option.textContent = label;
+                        searchToolSelect.appendChild(option);
+                    });
+                }
+
+                // Set hidden model field from default selection
+                updateModelFromSelection();
 
             } catch (error) {
-                modelSelect.innerHTML = '<option value="">Error loading models</option>';
-                modelHelp.textContent = 'Failed to load models from server';
-                console.error('Failed to load models:', error);
+                searchToolSelect.innerHTML = '<option value="">Error loading tools</option>';
+                console.error('Failed to load search tools:', error);
             }
         }
 
-        // Load models when page loads
-        loadModels();
+        function populateProcessingModels() {
+            processingModelSelect.innerHTML = '<option value="">Select a model...</option>';
+            modelsData.forEach(m => {
+                const option = document.createElement('option');
+                option.value = m.id;
+                let label = `${m.display_name} [${m.provider}]`;
+                if (m.processing_only) label += ' (extraction only)';
+                option.textContent = label;
+                // Pre-select the default model
+                if (m.default) option.selected = true;
+                processingModelSelect.appendChild(option);
+            });
+            // Add custom option
+            const customOpt = document.createElement('option');
+            customOpt.value = '__custom__';
+            customOpt.textContent = 'Custom (local model)...';
+            processingModelSelect.appendChild(customOpt);
+        }
+
+        function isSearchOnlyTool(val) {
+            return val.startsWith('tool:');
+        }
+
+        function updateModelFromSelection() {
+            const val = searchToolSelect.value;
+            if (!isSearchOnlyTool(val)) {
+                // LLM model selected — it handles everything
+                modelHidden.value = val.replace('model:', '');
+            }
+            // For search-only tools, model is set from processing model select
+        }
+
+        // Show/hide fields based on search tool selection
+        searchToolSelect.addEventListener('change', () => {
+            const val = searchToolSelect.value;
+
+            if (isSearchOnlyTool(val)) {
+                // Search-only tool: show processing model, maybe API key
+                processingModelRow.style.display = '';
+                populateProcessingModels();
+                const toolName = val.replace('tool:', '');
+                const tool = searchToolsData.find(t => t.name === toolName);
+                searchToolApiKeyGroup.style.display = (tool && tool.ready) ? 'none' : '';
+            } else {
+                // LLM model: hide processing model and API key fields
+                processingModelRow.style.display = 'none';
+                processingCustomGroup.style.display = 'none';
+                processingExtraGroup.style.display = 'none';
+                searchToolApiKeyGroup.style.display = 'none';
+            }
+
+            updateModelFromSelection();
+        });
+
+        processingModelSelect.addEventListener('change', () => {
+            const val = processingModelSelect.value;
+            const isCustom = val === '__custom__';
+            const isKnown = val !== '' && !isCustom && availableModelIds.has(val);
+
+            // Custom: show model name input + base URL + API key
+            processingCustomGroup.style.display = isCustom ? '' : 'none';
+            processingExtraGroup.style.display = isCustom ? '' : 'none';
+
+            // Clear hidden fields to prevent stale values being submitted
+            if (!isCustom) {
+                document.getElementById('processing_model_custom').value = '';
+                document.getElementById('processing_base_url').value = '';
+                document.getElementById('processing_api_key').value = '';
+            }
+
+            // Known model from server: key is already configured, hide everything
+            if (isKnown) {
+                processingExtraGroup.style.display = 'none';
+            }
+        });
+
+        // Load everything when page loads
+        loadSearchTools();
 
         function stopSearch() {
             if (eventSource) {
@@ -843,6 +993,36 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
             // Build form data
             const formData = new FormData(form);
             const data = Object.fromEntries(formData.entries());
+
+            // Map combined search tool dropdown to backend params
+            const toolVal = data.search_tool || '';
+            if (isSearchOnlyTool(toolVal)) {
+                // Search-only tool (Brave/Tavily): need separate model
+                data.search_tool = toolVal.replace('tool:', '');
+                const procModel = data.processing_model;
+                if (procModel === '__custom__') {
+                    // Custom/local model: pass as primary model with base_url
+                    data.model = data.processing_model_custom || '';
+                    data.base_url = data.processing_base_url || '';
+                    delete data.processing_model;
+                    delete data.processing_base_url;
+                } else if (procModel) {
+                    data.model = procModel;
+                    delete data.processing_model;
+                }
+            } else {
+                // LLM model: handles both search and processing
+                data.model = toolVal.replace('model:', '');
+                delete data.search_tool;
+                delete data.processing_model;
+            }
+            delete data.processing_model_custom;
+
+            // Remove empty optional fields to keep URL clean
+            ['search_tool', 'search_tool_api_key', 'base_url',
+             'processing_base_url', 'processing_api_key'].forEach(key => {
+                if (!data[key]) delete data[key];
+            });
 
             // Close any existing connection
             if (eventSource) {
@@ -1038,6 +1218,12 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
             document.getElementById('max_turns').value = '10';
             document.getElementById('top_candidates').value = '5';
             document.getElementById('fileName').textContent = '';
+            // Reset advanced fields
+            searchToolSelect.value = '';
+            searchToolApiKeyGroup.style.display = 'none';
+            processingModelSelect.value = '';
+            processingCustomGroup.style.display = 'none';
+            processingExtraGroup.style.display = 'none';
         });
 
         // Error modal functions
