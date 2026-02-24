@@ -339,8 +339,8 @@ def run_web_server(port: int = 5000):
     # Check if any models are available
     available = get_available_models()
     if not available:
-        console.print("[red]Error: No API keys configured[/red]")
-        console.print("[dim]Set GOOGLE_API_KEY or OPENAI_API_KEY environment variable[/dim]")
+        console.print("[red]Error: No models available[/red]")
+        console.print("[dim]Set GOOGLE_API_KEY or OPENAI_API_KEY, or configure a local model in collagent/models.yaml[/dim]")
         sys.exit(1)
 
     # Build provider info string

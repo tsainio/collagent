@@ -2,13 +2,13 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 
-An AI-powered tool to find potential research collaborators using Google Gemini or OpenAI GPT models with web search capabilities.
+An AI-powered tool to find potential research collaborators using Google Gemini, OpenAI GPT, or local models (Ollama, vLLM, LM Studio). Supports web search via built-in provider tools (Google, OpenAI) or external APIs (Brave, Tavily).
 
 ## Features
 
 - **Broad search mode** (default): Discovers relevant institutions automatically, then searches each for collaborators
 - **Single institution mode**: Target a specific university or research institute
-- **Flexible model routing**: Mix providers freely — e.g. Brave for search, local Ollama for extraction, Gemini for processing
+- **Flexible model routing**: Use different providers for search and processing — e.g. Brave for web search, Gemini for processing
 - **External search tools**: Use Tavily or Brave Search as alternatives to built-in provider search
 - **Local model support**: Any OpenAI-compatible API (Ollama, vLLM, LM Studio) works out of the box
 - **Web and CLI interfaces**: Real-time streaming progress, concurrent searches, downloadable reports (HTML, Markdown, PDF)
@@ -16,10 +16,11 @@ An AI-powered tool to find potential research collaborators using Google Gemini 
 ## Requirements
 
 - Python 3.10+
-- At least one AI model API key:
+- At least one of:
   - Google API key for Gemini models ([Get one here](https://aistudio.google.com/apikey))
   - OpenAI API key for GPT models ([Get one here](https://platform.openai.com/api-keys))
-- Optionally, an external search tool API key:
+  - A local OpenAI-compatible model (Ollama, vLLM, LM Studio) — no cloud API key needed
+- For web search with local models, an external search tool API key:
   - Tavily API key ([tavily.com](https://tavily.com))
   - Brave Search API key ([brave.com/search/api](https://brave.com/search/api/))
 
@@ -105,7 +106,7 @@ Any model served via an OpenAI-compatible API (Ollama, vLLM, LM Studio, llama.cp
 
 ```yaml
 models:
-  # Full search + processing model (appears in the Search Tool dropdown)
+  # Search + processing model (pair with Brave/Tavily for web search)
   - id: qwen3:14b
     display_name: "Qwen3 14B (Ollama)"
     provider: openai_compatible

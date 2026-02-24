@@ -13,12 +13,11 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     export $(grep -v '^#' "$SCRIPT_DIR/.env" | xargs)
 fi
 
-# Check if at least one API key is set
+# Warn if no cloud API key is set (local models still work without one)
 if [ -z "$GOOGLE_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; then
-    echo "Error: No API key set"
-    echo "Either create a .env file with GOOGLE_API_KEY or OPENAI_API_KEY"
-    echo "Or set it with: export GOOGLE_API_KEY=your_key"
-    exit 1
+    echo "Note: No cloud API key set (GOOGLE_API_KEY or OPENAI_API_KEY)"
+    echo "Only local models configured in collagent/models.yaml will be available."
+    echo ""
 fi
 
 # Check if container is already running

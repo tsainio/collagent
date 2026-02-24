@@ -35,7 +35,7 @@ models:
     provider: openai
 
   # Example local/custom models (uncomment and configure):
-  # Full search + processing (appears in Search Tool dropdown):
+  # Search + processing (pair with Brave/Tavily for web search):
   # - id: qwen3:14b
   #   display_name: "Qwen3 14B (Ollama)"
   #   provider: openai_compatible

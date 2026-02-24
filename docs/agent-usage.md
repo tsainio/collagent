@@ -29,19 +29,42 @@ The agent writes the research profile to a file, runs CollAgent, then reads `res
 
 ## Output Format
 
-The markdown report (`-o`) contains structured sections per institution:
+The markdown report (`-o`) contains structured sections. In broad mode, collaborators are grouped by institution:
 
 ```
-# CollAgent Report
+# Collaborator Search Report
 
-## Institution Name
+Generated: 2026-01-15 14:30
+Model: ...
 
-### Researcher Name
-- **Position**: ...
-- **Research Focus**: ...
-- **Alignment Score**: 4/5
-- **Key Publications**: ...
-- **Contact/Profile**: ...
+## Summary
+
+Found **12** potential collaborators across **3** institutions.
+
+### Institutions Searched
+- **MIT** (USA) - Relevance: ★★★★☆
+
+---
+
+## Collaborators by Institution
+
+### MIT (USA)
+
+*4 collaborator(s) found*
+
+#### 1. Researcher Name
+
+**Alignment:** ★★★★☆ (4/5)
+
+| Field | Details |
+|-------|---------|
+| Position | Associate Professor |
+| Email | name@mit.edu |
+
+**Research Focus:** ...
+**Why This Match:** ...
+**Suggested Collaboration:** ...
+**Key Publications:** ...
 ```
 
 ## Recommended Flags for Agent Use
@@ -75,7 +98,7 @@ Mount a volume to share input/output files between the agent and the container.
 
 ## Error Handling
 
-CollAgent exits with code 1 and prints errors to stderr for:
+CollAgent exits with code 1 and prints errors to the console for:
 - Missing or invalid API key
 - Unknown model name
 - Missing required `--profile` or `--profile-file`
