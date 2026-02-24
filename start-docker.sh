@@ -46,6 +46,7 @@ echo "Starting CollAgent web interface on port $PORT..."
 docker run -d \
     --name "$CONTAINER_NAME" \
     -p "${PORT}:${PORT}" \
+    --add-host=host.docker.internal:host-gateway \
     ${GOOGLE_API_KEY:+-e GOOGLE_API_KEY="$GOOGLE_API_KEY"} \
     ${OPENAI_API_KEY:+-e OPENAI_API_KEY="$OPENAI_API_KEY"} \
     ${BRAVE_SEARCH_API_KEY:+-e BRAVE_SEARCH_API_KEY="$BRAVE_SEARCH_API_KEY"} \

@@ -5,6 +5,7 @@ Copyright (C) 2026 Tuomo Sainio
 Licensed under AGPL-3.0
 """
 
+import gzip
 import json
 from abc import ABC, abstractmethod
 from urllib.request import Request, urlopen
@@ -82,7 +83,10 @@ class BraveSearch(SearchTool):
         )
 
         with urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw = resp.read()
+            if resp.headers.get("Content-Encoding") == "gzip":
+                raw = gzip.decompress(raw)
+            data = json.loads(raw.decode("utf-8"))
 
         results = []
         for item in data.get("web", {}).get("results", []):

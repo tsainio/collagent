@@ -13,6 +13,7 @@ from .config import get_model_by_id, get_default_model, get_provider_config
 
 
 def create_agent(model_id: Optional[str] = None, output_console=None,
+                 base_url: Optional[str] = None,
                  processing_model_id: Optional[str] = None,
                  processing_base_url: Optional[str] = None,
                  processing_api_key: Optional[str] = None,
@@ -37,22 +38,28 @@ def create_agent(model_id: Optional[str] = None, output_console=None,
         ValueError: If model not found or API key not set
     """
     # Get model configuration
-    if model_id:
+    if base_url:
+        # Custom openai_compatible model (e.g. local Ollama)
+        model_config = {"id": model_id or "default", "provider": "openai_compatible", "base_url": base_url}
+        provider = "openai_compatible"
+        provider_config = {}
+    elif model_id:
         model_config = get_model_by_id(model_id)
         if not model_config:
             raise ValueError(f"Unknown model: {model_id}")
+        provider = model_config.get("provider")
+        provider_config = get_provider_config(provider)
     else:
         model_config = get_default_model()
         if not model_config:
             raise ValueError("No default model configured")
+        provider = model_config.get("provider")
+        provider_config = get_provider_config(provider)
 
-    provider = model_config.get("provider")
-    provider_config = get_provider_config(provider)
-
-    # For openai_compatible, base_url comes from model config or CLI
+    # For openai_compatible, base_url comes from model config or parameter
     if provider == "openai_compatible":
-        base_url = model_config.get("base_url")
-        if not base_url:
+        model_base_url = base_url or model_config.get("base_url")
+        if not model_base_url:
             raise ValueError(f"No base_url configured for model: {model_id}")
         api_key = os.environ.get("OPENAI_API_KEY", "ollama")
     else:
@@ -74,8 +81,12 @@ def create_agent(model_id: Optional[str] = None, output_console=None,
         # Use OpenAI agent with custom base_url
         from .openai_agent import CollAgentOpenAI
         from openai import OpenAI
+        compat_client = OpenAI(base_url=model_base_url, api_key=api_key)
         agent = CollAgentOpenAI(api_key, model=model_config["id"], output_console=output_console)
-        agent.client = OpenAI(base_url=base_url, api_key=api_key)
+        agent.client = compat_client
+        # Also set as processing model so extraction uses Chat Completions
+        # (openai_compatible models don't support the Responses API)
+        agent.set_processing_model("openai_compatible", model_config["id"], client=compat_client)
     else:
         raise ValueError(f"Unknown provider: {provider}")
 

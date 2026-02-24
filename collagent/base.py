@@ -6,6 +6,7 @@ Licensed under AGPL-3.0
 """
 
 import json
+import re
 import threading
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -177,6 +178,11 @@ class CollAgentBase(ABC):
 
     # ── Shared search/extraction methods for external tools ──────────────
 
+    @staticmethod
+    def _strip_thinking_tokens(text: str) -> str:
+        """Strip <think>...</think> blocks from model output (e.g. qwen3)."""
+        return re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL)
+
     def _get_search_llm_client(self):
         """Get the OpenAI-compatible client to use for search LLM calls."""
         if self.search_client is not None:
@@ -268,9 +274,11 @@ class CollAgentBase(ABC):
 
             # Capture any text the LLM produced alongside tool calls
             if message.content:
-                accumulated_text.append(message.content)
-                preview = message.content[:400] + "..." if len(message.content) > 400 else message.content
-                self.console.print(f"[dim]{preview}[/dim]")
+                clean_content = self._strip_thinking_tokens(message.content)
+                if clean_content.strip():
+                    accumulated_text.append(clean_content)
+                    preview = clean_content[:400] + "..." if len(clean_content) > 400 else clean_content
+                    self.console.print(f"[dim]{preview}[/dim]")
 
             # Handle tool calls
             if message.tool_calls:
@@ -303,7 +311,7 @@ class CollAgentBase(ABC):
                 continue
 
             # No tool calls — this is a pure text response (a "text turn")
-            response_text = message.content or ""
+            response_text = self._strip_thinking_tokens(message.content or "")
             if response_text:
                 # Text was already captured above, just check stop conditions
                 text_turns += 1
@@ -346,8 +354,8 @@ class CollAgentBase(ABC):
                     messages=messages,
                     temperature=0.7,
                 )
-                response_text = response.choices[0].message.content or ""
-                if response_text:
+                response_text = self._strip_thinking_tokens(response.choices[0].message.content or "")
+                if response_text.strip():
                     accumulated_text.append(response_text)
             except Exception:
                 pass

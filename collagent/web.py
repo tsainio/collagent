@@ -83,6 +83,7 @@ def create_web_app():
         max_turns = int(request.args.get('max_turns', 10))
         top_candidates = int(request.args.get('top_candidates', 5))
         model = request.args.get('model', 'gemini-3-flash-preview')
+        base_url = request.args.get('base_url', '').strip() or None
 
         # New parameters for search tool and processing model
         search_tool = request.args.get('search_tool', '').strip() or None
@@ -109,6 +110,7 @@ def create_web_app():
                 agent = create_agent(
                     model,
                     output_console=streaming_console,
+                    base_url=base_url,
                     processing_model_id=processing_model,
                     processing_base_url=processing_base_url,
                     processing_api_key=processing_api_key,

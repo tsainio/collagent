@@ -697,8 +697,6 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
 
                 <input type="hidden" id="model" name="model" value="">
 
-                <h3 class="subsection-title">Advanced</h3>
-
                 <div class="form-row">
                     <div class="form-group">
                         <label for="search_tool">Search Tool</label>
@@ -732,7 +730,7 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                 <div class="form-row" id="processingExtraGroup" style="display: none;">
                     <div class="form-group">
                         <label for="processing_base_url">Processing Base URL</label>
-                        <input type="text" id="processing_base_url" name="processing_base_url" placeholder="e.g., http://localhost:11434/v1">
+                        <input type="text" id="processing_base_url" name="processing_base_url" placeholder="e.g., http://host.docker.internal:11434/v1">
                         <p class="help-text">Required for local/custom models</p>
                     </div>
                     <div class="form-group">
@@ -741,6 +739,8 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                         <p class="help-text">Overrides the default API key for this model</p>
                     </div>
                 </div>
+
+                <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 1.2rem 0;">
 
                 <button type="submit" class="btn btn-primary" id="searchBtn">
                     <span>Start Search</span>
@@ -928,6 +928,13 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
             processingCustomGroup.style.display = isCustom ? '' : 'none';
             processingExtraGroup.style.display = isCustom ? '' : 'none';
 
+            // Clear hidden fields to prevent stale values being submitted
+            if (!isCustom) {
+                document.getElementById('processing_model_custom').value = '';
+                document.getElementById('processing_base_url').value = '';
+                document.getElementById('processing_api_key').value = '';
+            }
+
             // Known model from server: key is already configured, hide everything
             if (isKnown) {
                 processingExtraGroup.style.display = 'none';
@@ -994,11 +1001,15 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                 data.search_tool = toolVal.replace('tool:', '');
                 const procModel = data.processing_model;
                 if (procModel === '__custom__') {
+                    // Custom/local model: pass as primary model with base_url
                     data.model = data.processing_model_custom || '';
+                    data.base_url = data.processing_base_url || '';
+                    delete data.processing_model;
+                    delete data.processing_base_url;
                 } else if (procModel) {
                     data.model = procModel;
+                    delete data.processing_model;
                 }
-                delete data.processing_model;
             } else {
                 // LLM model: handles both search and processing
                 data.model = toolVal.replace('model:', '');
@@ -1008,7 +1019,7 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
             delete data.processing_model_custom;
 
             // Remove empty optional fields to keep URL clean
-            ['search_tool', 'search_tool_api_key',
+            ['search_tool', 'search_tool_api_key', 'base_url',
              'processing_base_url', 'processing_api_key'].forEach(key => {
                 if (!data[key]) delete data[key];
             });
