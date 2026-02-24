@@ -769,6 +769,7 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                     <button class="btn btn-secondary" id="downloadHtmlBtn">Download HTML</button>
                     <button class="btn btn-secondary" id="downloadMdBtn">Download Markdown</button>
                     <button class="btn btn-secondary" id="downloadPdfBtn" style="{{PDF_BUTTON_STYLE}}">Download PDF</button>
+                    <button class="btn btn-secondary" id="downloadLogBtn">Download Log</button>
                     <button class="btn btn-secondary" id="newSearchBtn">New Search</button>
                 </div>
             </div>
@@ -1207,6 +1208,15 @@ WEB_TEMPLATE = '''<!DOCTYPE html>
                 const link = document.createElement('a');
                 link.href = '/results/' + currentSearchId + '?download=pdf';
                 link.download = 'collagent_report.pdf';
+                link.click();
+            }
+        });
+
+        document.getElementById('downloadLogBtn').addEventListener('click', () => {
+            if (currentSearchId) {
+                const link = document.createElement('a');
+                link.href = '/results/' + currentSearchId + '?download=log';
+                link.download = 'collagent_log.html';
                 link.click();
             }
         });

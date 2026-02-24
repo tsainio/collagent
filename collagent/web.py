@@ -246,6 +246,7 @@ def create_web_app():
                         search_results[search_id] = {
                             'html': html_report,
                             'markdown': report_md,
+                            'log_html': streaming_console.export_html(),
                             'collaborators': agent.collaborators,
                             'timestamp': datetime.now()
                         }
@@ -303,6 +304,12 @@ def create_web_app():
                 result['markdown'],
                 mimetype='text/markdown',
                 headers={'Content-Disposition': f'attachment; filename=collagent_report_{search_id[:8]}.md'}
+            )
+        elif download == 'log':
+            return Response(
+                result.get('log_html', 'No log available'),
+                mimetype='text/html',
+                headers={'Content-Disposition': f'attachment; filename=collagent_log_{search_id[:8]}.html'}
             )
         elif download == 'pdf':
             if not WEASYPRINT_AVAILABLE:

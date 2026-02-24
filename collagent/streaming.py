@@ -57,7 +57,7 @@ class StreamingConsole:
             msg["help_url"] = help_url
         self.queue.put(msg)
 
-    def print(self, *args, section: str = None, **kwargs):
+    def print(self, *args, section: str = None, _record: bool = True, **kwargs):
         """Capture print output and send to queue.
 
         Args:
@@ -94,6 +94,11 @@ class StreamingConsole:
             self.queue.put(msg)
 
         # Also record to the internal console for HTML export
+        if _record:
+            self._console.print(*args, **kwargs)
+
+    def record(self, *args, **kwargs):
+        """Record to the internal console only (for HTML log), without sending to SSE stream."""
         self._console.print(*args, **kwargs)
 
     def save_html(self, path: str, clear: bool = False):

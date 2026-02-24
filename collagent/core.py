@@ -135,8 +135,11 @@ class CollAgentGoogle(CollAgentBase):
             # Capture any text the LLM produced alongside function calls
             if response_text:
                 accumulated_text.append(response_text)
-                preview = response_text[:400] + "..." if len(response_text) > 400 else response_text
-                self.console.print(f"[dim]{preview}[/dim]")
+                if len(response_text) > 400 and hasattr(self.console, 'record'):
+                    self.console.print(f"[dim]{response_text[:400]}...[/dim]", _record=False)
+                    self.console.record(f"[dim]{response_text}[/dim]")
+                else:
+                    self.console.print(f"[dim]{response_text}[/dim]")
 
             if func_calls:
                 did_search = True
@@ -262,8 +265,11 @@ class CollAgentGoogle(CollAgentBase):
             response_text = self.get_response_text(response)
             if response_text:
                 accumulated_text.append(response_text)
-                preview = response_text[:400] + "..." if len(response_text) > 400 else response_text
-                self.console.print(f"[dim]{preview}[/dim]")
+                if len(response_text) > 400 and hasattr(self.console, 'record'):
+                    self.console.print(f"[dim]{response_text[:400]}...[/dim]", _record=False)
+                    self.console.record(f"[dim]{response_text}[/dim]")
+                else:
+                    self.console.print(f"[dim]{response_text}[/dim]")
 
                 # Check for stop phrase
                 if "SEARCH COMPLETE" in response_text.upper():

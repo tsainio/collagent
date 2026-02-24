@@ -277,8 +277,12 @@ class CollAgentBase(ABC):
                 clean_content = self._strip_thinking_tokens(message.content)
                 if clean_content.strip():
                     accumulated_text.append(clean_content)
-                    preview = clean_content[:400] + "..." if len(clean_content) > 400 else clean_content
-                    self.console.print(f"[dim]{preview}[/dim]")
+                    if len(clean_content) > 400 and hasattr(self.console, 'record'):
+                        # Truncated for live view, full in log
+                        self.console.print(f"[dim]{clean_content[:400]}...[/dim]", _record=False)
+                        self.console.record(f"[dim]{clean_content}[/dim]")
+                    else:
+                        self.console.print(f"[dim]{clean_content}[/dim]")
 
             # Handle tool calls
             if message.tool_calls:
