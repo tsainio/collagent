@@ -35,6 +35,13 @@ models:
     provider: openai
 
   # Example local/custom models (uncomment and configure):
+  # Full search + processing (appears in Search Tool dropdown):
+  # - id: qwen3:14b
+  #   display_name: "Qwen3 14B (Ollama)"
+  #   provider: openai_compatible
+  #   base_url: "http://localhost:11434/v1"
+  #
+  # Extraction-only (appears only in Processing Model dropdown):
   # - id: llama3.3
   #   display_name: "Llama 3.3 70B (Ollama)"
   #   provider: openai_compatible

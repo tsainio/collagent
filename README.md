@@ -6,7 +6,7 @@ An AI-powered tool to find potential research collaborators using Google Gemini 
 
 ## Features
 
-- **Web interface**: Beautiful dark-mode glassmorphism UI with real-time streaming progress
+- **Web interface**: Dark-mode UI with real-time streaming progress
 - **Broad search mode** (default): Automatically discovers relevant institutions, then searches each for collaborators
 - **Single institution mode**: Target a specific university or research institute
 - **Multiple simultaneous searches**: Web interface supports concurrent searches
@@ -124,7 +124,7 @@ python collagent.py -f my_profile.txt --max-institutions 5
 
 ## Web Interface
 
-The web interface provides a beautiful dark-mode glassmorphism UI with real-time streaming output:
+The web interface provides real-time streaming output:
 
 ```bash
 # Local Python (runs in foreground, Ctrl+C to stop)
@@ -274,12 +274,21 @@ Any model served via an OpenAI-compatible API (Ollama, vLLM, LM Studio, llama.cp
 
 ```yaml
 models:
+  # Full search + processing model (appears in the Search Tool dropdown)
+  - id: qwen3:14b
+    display_name: "Qwen3 14B (Ollama)"
+    provider: openai_compatible
+    base_url: "http://localhost:11434/v1"
+
+  # Extraction-only model (appears only in Processing Model dropdown)
   - id: llama3.3
     display_name: "Llama 3.3 70B (Ollama)"
     provider: openai_compatible
     base_url: "http://localhost:11434/v1"
-    processing_only: true   # won't appear as a search tool
+    processing_only: true
 ```
+
+When running in Docker, use `http://host.docker.internal:11434/v1` instead of `localhost` to reach Ollama on the host machine.
 
 Pre-configured models appear as regular options in the web UI dropdowns. This is the recommended approach for multi-user deployments — admins configure models in `models.yaml` and API keys in `.env`, and users simply pick from the available options.
 
